@@ -44,8 +44,8 @@ PointYoink is the one that understands the MIRACO's on-device project layout and
 
 ## Supported scanners
 
-- **MIRACO** - tested and working.
-- **MIRACO Pro and MIRACO Plus** - same standalone design, should work, but not yet confirmed. Reports welcome.
+- **MIRACO Pro** - tested and working (this is what PointYoink was built and verified against).
+- **MIRACO and MIRACO Plus** - same standalone design, should work, but not yet confirmed. Reports welcome.
 
 These are the standalone MIRACO models that store finished projects on the device and expose them over USB. Tethered scanners (POP, INSPIRE, RANGE, MINI, MetroX) are not supported, because those keep their data on whatever computer or phone ran Revo Scan, not on the scanner. If you have one of those, your files are already on that machine.
 

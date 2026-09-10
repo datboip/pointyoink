@@ -1,5 +1,11 @@
 # PointYoink
 
+[![Release](https://img.shields.io/github/v/release/datboip/pointyoink?color=4aa3ff)](https://github.com/datboip/pointyoink/releases)
+[![Downloads](https://img.shields.io/github/downloads/datboip/pointyoink/total?color=3ecf8e)](https://github.com/datboip/pointyoink/releases)
+[![Stars](https://img.shields.io/github/stars/datboip/pointyoink?color=ffb454)](https://github.com/datboip/pointyoink/stargazers)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Linux-informational)
+
 **Get your Revopoint MIRACO 3D scans onto Linux, without Revo Scan, Wine, or a Windows VM.**
 
 Revopoint's Revo Scan software is Windows, macOS, iOS and Android only. There is no Linux version, so getting your finished scans off a MIRACO on a Linux machine usually means dual-booting, running a Windows VM, or fighting a raw MTP copy that drags thousands of tiny files across a slow connection.

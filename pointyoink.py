@@ -9,7 +9,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image
 
-APP = "PointYoink"; VERSION = "0.6.1"
+APP = "PointYoink"; VERSION = "0.6.2"
 GITHUB = "https://github.com/datboip/pointyoink"
 HOME = os.path.expanduser("~")
 MOUNT = os.path.join(HOME, "revopoint-mtp")
@@ -26,7 +26,12 @@ BG="#0e1117"; CARD="#171b23"; CARD2="#1d222c"; STROKE="#2a3140"; SELB="#22304a"
 AC="#4aa3ff"; AC_H="#3b8fe6"; OK="#3ecf8e"; WARN="#ffb454"; DANGER="#ff6b6b"
 TX="#eef1f5"; MUT="#98a2b3"
 
-CHANGELOG = """0.6.1
+CHANGELOG = """0.6.2
+  - "Imported" now reflects what is actually on disk - the badge clears if you
+    delete the files, and updates live.
+  - Project cards rebalanced so the size no longer gets cut off.
+
+0.6.1
   - Export ZIP now shows an estimated size next to each option, so you can pick
     one that fits (e.g. under an upload limit) before zipping.
 
@@ -857,8 +862,11 @@ class App(ctk.CTk):
     def disp(self, name):
         return (self.records.get(name,{}).get("label") or name)
     def is_imported(self, name):
-        if self.records.get(name,{}).get("imported_at"): return True
-        return os.path.isdir(os.path.join(self.dest.get() or DEFAULT_DEST, name))
+        # reflect reality: the files must still exist on disk (a saved record isn't enough,
+        # since the user may have deleted the folder)
+        d=os.path.join(self.dest.get() or DEFAULT_DEST, name)
+        try: return os.path.isdir(d) and any(True for _ in os.scandir(d))
+        except Exception: return False
     def _proj(self, name):
         return next((x for x in self.projects if x["name"]==name), None)
     def changed(self, name):
@@ -918,7 +926,9 @@ class App(ctk.CTk):
                     self.set_banner("MIRACO detected · Not connected - click Connect →", AC)
             elif mounted:
                 self.action_btn.configure(text="Rescan", state="normal")
-                if self.listed: self.set_banner("Connected - tick scans to import, click one to preview.", OK)
+                if self.listed:
+                    self.set_banner("Connected - tick scans to import, click one to preview.", OK)
+                    if self.projects: self.render_list(self.projects)   # refresh badges if files changed on disk (cheap no-op otherwise)
                 else: self.set_banner("Reading projects off the scanner… (MTP is slow)", AC); self.start_listing()
         self.after(1500, self.refresh_loop)
     def start_listing(self):
@@ -934,7 +944,8 @@ class App(ctk.CTk):
 
     # ---- list ----
     def render_list(self, projs):
-        sig=json.dumps(projs)
+        # include imported/changed state so the list re-renders when files appear or are deleted
+        sig=json.dumps([[p, self.is_imported(p["name"]), self.changed(p["name"])] for p in projs])
         if sig==self.projects_sig: return
         self.projects_sig=sig; self.projects=projs
         for w in self.llist.winfo_children(): w.destroy()
@@ -957,12 +968,12 @@ class App(ctk.CTk):
                          anchor="w").pack(anchor="w", fill="x")
             if self.records.get(name,{}).get("label"):
                 ctk.CTkLabel(txt, text=name, text_color=MUT, font=ctk.CTkFont(size=9), anchor="w").pack(anchor="w", fill="x")
-            # line 2: date
-            if p.get("date"):
-                ctk.CTkLabel(txt, text=p["date"], text_color=MUT, font=ctk.CTkFont(size=10), anchor="w").pack(anchor="w", fill="x")
-            # line 3: size · scans · meshes (+ imported/updated badge)
+            # line 2: date · size
+            l2=" · ".join([x for x in [p.get("date") or "", human(self.size_cache[name]) if self.size_cache.get(name) else ""] if x])
+            if l2:
+                ctk.CTkLabel(txt, text=l2, text_color=MUT, font=ctk.CTkFont(size=10), anchor="w").pack(anchor="w", fill="x")
+            # line 3: scans · meshes · clouds (+ imported/updated badge)
             parts=[]
-            if self.size_cache.get(name): parts.append(human(self.size_cache[name]))
             if p.get("nodes"): parts.append("%d scans"%p["nodes"])
             if p.get("meshes"): parts.append("%d mesh%s"%(p["meshes"], "es" if p["meshes"]!=1 else ""))
             if p.get("clouds"): parts.append("%d cloud%s"%(p["clouds"], "s" if p["clouds"]!=1 else ""))

@@ -9,7 +9,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image
 
-APP = "PointYoink"; VERSION = "0.5.0"
+APP = "PointYoink"; VERSION = "0.5.1"
 GITHUB = "https://github.com/datboip/pointyoink"
 HOME = os.path.expanduser("~")
 MOUNT = os.path.join(HOME, "revopoint-mtp")
@@ -26,7 +26,14 @@ BG="#0e1117"; CARD="#171b23"; CARD2="#1d222c"; STROKE="#2a3140"; SELB="#22304a"
 AC="#4aa3ff"; AC_H="#3b8fe6"; OK="#3ecf8e"; WARN="#ffb454"; DANGER="#ff6b6b"
 TX="#eef1f5"; MUT="#98a2b3"
 
-CHANGELOG = """0.5.0
+CHANGELOG = """0.5.1
+  - 3D viewer opens already-drawn (no black flash while it loads).
+  - Preview image scales to fit the window at any size.
+  - Project cards on three lines so nothing is cut off.
+  - Exported STL/OBJ/GLB are named per project + scan, so they stay unique
+    when you gather them in one folder.
+
+0.5.0
   - View in 3D: open a scan's mesh in an interactive window (drag to rotate,
     scroll to zoom). Works straight from the device or a local copy.
 
@@ -503,9 +510,10 @@ class App(ctk.CTk):
                                  segmented_button_selected_color=AC, text_color=TX)
         self.tabs.grid(row=0,column=0, sticky="nsew")
         pv=self.tabs.add("Preview"); fl=self.tabs.add("Files")
-        pv.grid_columnconfigure(0, weight=1); pv.grid_rowconfigure(0, weight=1)
+        pv.grid_columnconfigure(0, weight=1); pv.grid_rowconfigure(0, weight=1, minsize=240)
         self.big=ctk.CTkLabel(pv, text="Select a project to preview its scans", fg_color="#0a0c10",
                               corner_radius=12, text_color=MUT); self.big.grid(row=0,column=0, sticky="nsew", padx=10, pady=10)
+        self.big.bind("<Configure>", self._on_big_resize)
         self.view_btn=ctk.CTkButton(pv, text="⟳  View in 3D", width=130, height=32, corner_radius=16,
                                     fg_color=AC, hover_color=AC_H, text_color="#04121f",
                                     font=ctk.CTkFont(size=12,weight="bold"), command=self.on_view_3d)
@@ -914,17 +922,23 @@ class App(ctk.CTk):
                 try: self.imgs["row_"+name]=cimg(p["thumb"],54); ctk.CTkLabel(card, image=self.imgs["row_"+name], text="").grid(row=0,column=1, padx=4)
                 except Exception: ctk.CTkLabel(card, text="-", text_color=MUT, width=54).grid(row=0,column=1)
             else: ctk.CTkLabel(card, text="-", text_color=MUT, width=54).grid(row=0,column=1)
-            txt=ctk.CTkFrame(card, fg_color="transparent"); txt.grid(row=0,column=2, sticky="ew", padx=6)
+            txt=ctk.CTkFrame(card, fg_color="transparent"); txt.grid(row=0,column=2, sticky="ew", padx=6, pady=6)
+            # line 1: name (+ original id underneath if it was renamed)
             ctk.CTkLabel(txt, text=self.disp(name), text_color=TX, font=ctk.CTkFont(size=12,weight="bold"),
                          anchor="w").pack(anchor="w", fill="x")
             if self.records.get(name,{}).get("label"):
-                ctk.CTkLabel(txt, text=name, text_color=MUT, font=ctk.CTkFont(size=9), anchor="w").pack(anchor="w")
-            meta=" · ".join([x for x in [
-                (str(p["meshes"])+"M") if p.get("meshes") else "", (str(p["clouds"])+"C") if p.get("clouds") else "",
-                (str(p["nodes"])+" scans") if p.get("nodes") else "",
-                (human(self.size_cache[name]) if self.size_cache.get(name) else "")] if x])
+                ctk.CTkLabel(txt, text=name, text_color=MUT, font=ctk.CTkFont(size=9), anchor="w").pack(anchor="w", fill="x")
+            # line 2: date
+            if p.get("date"):
+                ctk.CTkLabel(txt, text=p["date"], text_color=MUT, font=ctk.CTkFont(size=10), anchor="w").pack(anchor="w", fill="x")
+            # line 3: size · scans · meshes (+ imported/updated badge)
+            parts=[]
+            if self.size_cache.get(name): parts.append(human(self.size_cache[name]))
+            if p.get("nodes"): parts.append("%d scans"%p["nodes"])
+            if p.get("meshes"): parts.append("%d mesh%s"%(p["meshes"], "es" if p["meshes"]!=1 else ""))
+            if p.get("clouds"): parts.append("%d cloud%s"%(p["clouds"], "s" if p["clouds"]!=1 else ""))
             ml=ctk.CTkFrame(txt, fg_color="transparent"); ml.pack(anchor="w", fill="x")
-            ctk.CTkLabel(ml, text=(p.get("date") or "")+"   "+meta, text_color=MUT, font=ctk.CTkFont(size=10)).pack(side="left")
+            ctk.CTkLabel(ml, text=" · ".join(parts), text_color=MUT, font=ctk.CTkFont(size=10)).pack(side="left")
             if self.is_imported(name):
                 if self.changed(name):
                     ctk.CTkLabel(ml, text="  ↻ updated", text_color=WARN, font=ctk.CTkFont(size=10)).pack(side="left")
@@ -947,8 +961,7 @@ class App(ctk.CTk):
         p=next((x for x in self.projects if x["name"]==name), None)
         if not p: return
         if p.get("thumb"):
-            try: self.imgs["big"]=cimg(p["thumb"],420); self.big.configure(image=self.imgs["big"], text="")
-            except Exception: self.big.configure(image=None, text="(preview unavailable)")
+            self._set_big_image(p["thumb"])
         self.detail.configure(text="Project: %s     Edited: %s\nMeshes: %s   Point clouds: %s   Scans: %s"%(
             name, p.get("date") or "?", p.get("meshes"), p.get("clouds"), p.get("nodes")))
         self.detail.grid(); self.renders_lbl.grid(); self.film.grid()
@@ -975,7 +988,31 @@ class App(ctk.CTk):
                 lbl.pack(side="left", padx=4, pady=4); lbl.bind("<Button-1>", lambda e,pp=path: self._enlarge(pp))
             except Exception: pass
     def _enlarge(self, path):
-        try: self.imgs["big"]=cimg(path,440); self.big.configure(image=self.imgs["big"], text="")
+        self._set_big_image(path)
+
+    def _set_big_image(self, path):
+        """Show a preview that scales to fill the box and re-fits on window resize."""
+        try:
+            self._big_src=Image.open(path).convert("RGBA")
+            self.imgs["big"]=ctk.CTkImage(light_image=self._big_src, dark_image=self._big_src, size=(320,240))
+            self.big.configure(image=self.imgs["big"], text="")
+            self._fit_big()
+        except Exception:
+            self._big_src=None; self.big.configure(image=None, text="(preview unavailable)")
+    def _on_big_resize(self, e):
+        if getattr(self,"_fit_job",None):
+            try: self.after_cancel(self._fit_job)
+            except Exception: pass
+        self._fit_job=self.after(60, self._fit_big)
+    def _fit_big(self, _=None):
+        src=getattr(self,"_big_src",None)
+        if src is None or "big" not in self.imgs: return
+        try:
+            bw=max(60, self.big.winfo_width()-24); bh=max(60, self.big.winfo_height()-24)
+            iw,ih=src.size
+            scale=min(bw/iw, bh/ih)
+            scale=min(scale, 2.2)   # cap upscaling so a small preview doesn't get too blurry
+            self.imgs["big"].configure(size=(max(20,int(iw*scale)), max(20,int(ih*scale))))
         except Exception: pass
 
     # ---- import ----
@@ -1022,13 +1059,18 @@ class App(ctk.CTk):
         self.q.put(("cancelled" if self.cancel else "done", dest, failed))
     def _convert_meshes(self, dst, name, fmts, i, total):
         import trimesh
-        plys=glob.glob(os.path.join(dst,"data","*","fuse_mesh.ply"))  # only meshes (have faces)
-        for ply in plys:
+        plys=sorted(glob.glob(os.path.join(dst,"data","*","fuse_mesh.ply")))  # only meshes (have faces)
+        base=re.sub(r"[^A-Za-z0-9._-]+", "_", self.disp(name)).strip("_") or name
+        multi=len(plys)>1
+        for idx,ply in enumerate(plys,1):
+            node=os.path.basename(os.path.dirname(ply))          # the scan id (numbers)
+            stem="%s_%s"%(base, node)                            # e.g. Project09102026033917_09102026034658
+            if multi: stem+="_m%d"%idx                           # extra guard if two meshes share a node
             self.q.put(("prog", (i+1)/total, "Converting %s to %s"%(name, "/".join(f.upper() for f in fmts))))
             try:
                 mesh=trimesh.load(ply, force="mesh")
                 for ext in fmts:
-                    mesh.export(ply[:-4]+"."+ext)
+                    mesh.export(os.path.join(os.path.dirname(ply), stem+"."+ext))
             except Exception as e:
                 log_error("convert "+os.path.basename(ply), e)
 

@@ -34,17 +34,23 @@ def main():
     except Exception as e:
         print("PYVIEW_ERROR could not load", path, e, flush=True); return 4
 
-    class ReadyViewer(SceneViewer):
-        _announced = False
-        def on_draw(self):
-            super().on_draw()
-            if not self._announced:      # first real frame is on screen now
-                self._announced = True
-                print("PYVIEW_READY", flush=True)
-
     try:
-        ReadyViewer(scene, caption="PointYoink - " + title, smooth=False,
-                    background=(14, 17, 23, 255))
+        import pyglet
+        # build the window HIDDEN and don't start the loop yet
+        viewer = SceneViewer(scene, caption="PointYoink - " + title, smooth=False,
+                             background=(14, 17, 23, 255), visible=False, start_loop=False)
+        # force the first (slow) render offscreen so the window is never shown black:
+        # GL buffer upload for millions of verts happens here, while hidden.
+        try:
+            viewer.switch_to()
+            viewer.dispatch_event("on_draw")
+            viewer.flip()
+        except Exception:
+            pass
+        viewer.set_visible(True)
+        viewer.activate()
+        print("PYVIEW_READY", flush=True)     # window is now up WITH the mesh drawn
+        pyglet.app.run()
     except Exception as e:
         print("PYVIEW_ERROR viewer failed:", e, flush=True); return 5
     return 0

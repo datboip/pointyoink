@@ -3,6 +3,13 @@
 All notable changes to PointYoink. Versions before 1.0.0 are pre-release
 builds; 1.0.0 will be the first public GitHub release.
 
+## 0.5.1
+- 3D viewer now opens already-drawn instead of flashing a black window.
+- Preview image scales to fit the window at any size.
+- Project cards laid out on three lines so details are never cut off.
+- Exported STL/OBJ/GLB files are named per project and scan, so they stay
+  unique when collected in one folder.
+
 ## 0.5.0
 - **View in 3D**: open any scan's mesh in an interactive window - drag to
   rotate, scroll to zoom, right-drag to pan. A loading indicator stays up until

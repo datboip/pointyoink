@@ -9,7 +9,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image
 
-APP = "PointYoink"; VERSION = "0.3.0"
+APP = "PointYoink"; VERSION = "0.3.1"
 GITHUB = "https://github.com/datboip/pointyoink"
 HOME = os.path.expanduser("~")
 MOUNT = os.path.join(HOME, "revopoint-mtp")
@@ -26,7 +26,13 @@ BG="#0e1117"; CARD="#171b23"; CARD2="#1d222c"; STROKE="#2a3140"; SELB="#22304a"
 AC="#4aa3ff"; AC_H="#3b8fe6"; OK="#3ecf8e"; WARN="#ffb454"; DANGER="#ff6b6b"
 TX="#eef1f5"; MUT="#98a2b3"
 
-CHANGELOG = """0.3.0
+CHANGELOG = """0.3.1
+  - Fix tiny window on HiDPI laptops (auto-detect display scale) and add a
+    UI scale setting.
+  - Smarter re-import: detects when a project changed on the device.
+  - Themed dialogs, animated conversion progress.
+
+0.3.0
   - Rounded UI built on CustomTkinter, app icon, splash screen, cleaner spacing.
   - Auto-connects when the scanner is in File Transfer mode.
   - Optional STL / OBJ export of the meshes on import.
@@ -236,7 +242,27 @@ class App(ctk.CTk):
         self.cfg = load_cfg()
         # per-project records keyed by ORIGINAL id: {label, imported_to, imported_at}
         self.records = self.cfg.get("records", {})
-        self.title("%s  %s" % (APP, VERSION)); self.geometry(self.cfg.get("geometry","1080x840")); self.minsize(940,720)
+        # --- UI scaling: honor a saved override, else auto-detect HiDPI so it isn't tiny on laptops ---
+        try:
+            scale=self.cfg.get("ui_scale")
+            if not scale:
+                ppi=self.winfo_fpixels("1i") or 96.0
+                scale=max(1.0, min(2.5, round(ppi/96.0*20)/20)) if ppi>110 else 1.0
+            scale=float(scale)
+            if abs(scale-1.0)>0.02:
+                ctk.set_widget_scaling(scale); ctk.set_window_scaling(scale)
+            self._ui_scale=scale
+        except Exception as e:
+            self._ui_scale=1.0; log_error("ui-scale", e)
+        # window size: default, but never bigger than the screen (keeps it usable on small/scaled displays)
+        try:
+            sw=self.winfo_screenwidth(); sh=self.winfo_screenheight()
+            dw=min(1080, int(sw*0.92)); dh=min(840, int(sh*0.90))
+        except Exception:
+            dw,dh=1080,840
+        self.title("%s  %s" % (APP, VERSION))
+        self.geometry(self.cfg.get("geometry", "%dx%d"%(dw,dh)))
+        self.minsize(min(940,dw), min(680,dh))
         self.configure(fg_color=BG)
         try:
             if os.path.exists(ICON):
@@ -681,7 +707,7 @@ class App(ctk.CTk):
         box=ctk.CTkTextbox(t, fg_color=CARD, text_color=TX, corner_radius=12, wrap="word", height=150)
         box.pack(fill="both", expand=True, padx=24, pady=(4,20)); box.insert("1.0", CHANGELOG); box.configure(state="disabled")
     def dlg_settings(self):
-        t=self._top("Settings", 540, 300)
+        t=self._top("Settings", 560, 400)
         if t is None: return
         ctk.CTkLabel(t, text="Default save folder", text_color=TX, anchor="w").pack(fill="x", padx=20, pady=(20,4))
         dv=ctk.StringVar(value=self.dest.get()); row=ctk.CTkFrame(t, fg_color="transparent"); row.pack(fill="x", padx=20)
@@ -691,8 +717,20 @@ class App(ctk.CTk):
         mo=ctk.BooleanVar(value=self.models_only.get()); ao=ctk.BooleanVar(value=self.auto_open.get())
         ctk.CTkCheckBox(t, text="Models only by default", variable=mo, fg_color=AC, hover_color=AC_H, text_color=TX).pack(anchor="w", padx=20, pady=(16,4))
         ctk.CTkCheckBox(t, text="Open folder when import finishes", variable=ao, fg_color=AC, hover_color=AC_H, text_color=TX).pack(anchor="w", padx=20)
+        # UI scale (for HiDPI / tiny-window fix)
+        sr=ctk.CTkFrame(t, fg_color="transparent"); sr.pack(fill="x", padx=20, pady=(18,0))
+        cur=getattr(self,"_ui_scale",1.0)
+        sv=ctk.DoubleVar(value=cur)
+        lab=ctk.CTkLabel(sr, text="UI scale: %.2fx"%cur, text_color=TX); lab.pack(side="left")
+        ctk.CTkLabel(sr, text="(raise this if the window is tiny; applies next launch)", text_color=MUT, font=ctk.CTkFont(size=10)).pack(side="left", padx=(8,0))
+        sl=ctk.CTkSlider(t, from_=0.8, to=2.5, number_of_steps=34, variable=sv,
+                         command=lambda v: lab.configure(text="UI scale: %.2fx"%float(v)))
+        sl.pack(fill="x", padx=20, pady=(4,0))
         def save():
-            self.dest.set(dv.get()); self.models_only.set(mo.get()); self.auto_open.set(ao.get()); self._persist(); t.destroy()
+            self.dest.set(dv.get()); self.models_only.set(mo.get()); self.auto_open.set(ao.get())
+            self.cfg["ui_scale"]=round(float(sv.get()),2); self._persist(); t.destroy()
+            if abs(float(sv.get())-cur)>0.02:
+                self._alert("UI scale changed", "The new UI scale takes effect next time you open PointYoink.")
         ctk.CTkButton(t, text="Save", corner_radius=18, fg_color=AC, hover_color=AC_H, text_color="#04121f", command=save).pack(pady=20)
 
     def _on_tk_error(self, exc, val, tb):

@@ -3,6 +3,15 @@
 All notable changes to PointYoink. Versions before 1.0.0 are pre-release
 builds; 1.0.0 will be the first public GitHub release.
 
+## 0.3.1
+- Fix a tiny window on HiDPI laptops by auto-detecting the display scale, plus a
+  manual UI scale setting under Settings.
+- Window no longer opens larger than the screen.
+- Smarter re-import: shows an "updated" badge and skips the already-imported
+  prompt when a project has changed on the device.
+- Themed confirmation dialogs and animated progress during format conversion.
+- Debian package (.deb) for one-command install.
+
 ## 0.3.0
 - Rounded UI built on CustomTkinter, with an app icon, splash screen, and cleaner spacing.
 - Auto-connects when the scanner is in File Transfer mode.

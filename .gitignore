@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+# local runtime / user data - never commit scans or configs
+*.ply
+*.revo
+revopoint-scans*/
+config.json

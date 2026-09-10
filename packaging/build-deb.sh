@@ -16,7 +16,7 @@ mkdir -p "$PKG/DEBIAN" \
          "$PKG/usr/share/doc/pointyoink"
 
 # --- vendor the pip-only, pure-python deps ---
-"$ROOT/venv/bin/pip" install --quiet --target "$PKG/usr/lib/pointyoink/vendor" customtkinter trimesh
+"$ROOT/venv/bin/pip" install --quiet --target "$PKG/usr/lib/pointyoink/vendor" customtkinter trimesh "pyglet<2"
 # drop things provided by apt (PIL/ImageTk must be the system tk-linked build; numpy is python3-numpy)
 V="$PKG/usr/lib/pointyoink/vendor"
 rm -rf "$V"/PIL* "$V"/Pillow* "$V"/pillow* "$V"/numpy* "$V"/bin "$V"/__pycache__ 2>/dev/null || true
@@ -24,6 +24,7 @@ find "$V" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || tr
 
 # --- app files ---
 cp "$ROOT/pointyoink.py" "$PKG/usr/lib/pointyoink/"
+cp "$ROOT/viewer.py"     "$PKG/usr/lib/pointyoink/"
 cp "$ROOT/icon.png"      "$PKG/usr/lib/pointyoink/"
 cp "$ROOT/icon.png"      "$PKG/usr/share/icons/hicolor/512x512/apps/pointyoink.png"
 cp "$ROOT/LICENSE" "$ROOT/README.md" "$ROOT/CHANGELOG.md" "$PKG/usr/share/doc/pointyoink/" 2>/dev/null || true

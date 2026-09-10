@@ -9,7 +9,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image
 
-APP = "PointYoink"; VERSION = "0.4.0"
+APP = "PointYoink"; VERSION = "0.5.0"
 GITHUB = "https://github.com/datboip/pointyoink"
 HOME = os.path.expanduser("~")
 MOUNT = os.path.join(HOME, "revopoint-mtp")
@@ -26,7 +26,11 @@ BG="#0e1117"; CARD="#171b23"; CARD2="#1d222c"; STROKE="#2a3140"; SELB="#22304a"
 AC="#4aa3ff"; AC_H="#3b8fe6"; OK="#3ecf8e"; WARN="#ffb454"; DANGER="#ff6b6b"
 TX="#eef1f5"; MUT="#98a2b3"
 
-CHANGELOG = """0.4.0
+CHANGELOG = """0.5.0
+  - View in 3D: open a scan's mesh in an interactive window (drag to rotate,
+    scroll to zoom). Works straight from the device or a local copy.
+
+0.4.0
   - Export ZIP button: bundle the selected project(s) into a .zip in your save
     folder (raw frames skipped), for archiving or moving to another machine.
 
@@ -502,6 +506,10 @@ class App(ctk.CTk):
         pv.grid_columnconfigure(0, weight=1); pv.grid_rowconfigure(0, weight=1)
         self.big=ctk.CTkLabel(pv, text="Select a project to preview its scans", fg_color="#0a0c10",
                               corner_radius=12, text_color=MUT); self.big.grid(row=0,column=0, sticky="nsew", padx=10, pady=10)
+        self.view_btn=ctk.CTkButton(pv, text="⟳  View in 3D", width=130, height=32, corner_radius=16,
+                                    fg_color=AC, hover_color=AC_H, text_color="#04121f",
+                                    font=ctk.CTkFont(size=12,weight="bold"), command=self.on_view_3d)
+        self.view_btn.place(relx=0.975, y=26, anchor="ne"); self.view_btn.place_forget()
         self.detail=ctk.CTkLabel(pv, text="", text_color=TX, anchor="w", justify="left", font=ctk.CTkFont(size=12))
         self.detail.grid(row=1,column=0, sticky="w", padx=12); self.detail.grid_remove()
         self.renders_lbl=ctk.CTkLabel(pv, text="scan renders (click to enlarge)", text_color=MUT, font=ctk.CTkFont(size=11))
@@ -944,6 +952,8 @@ class App(ctk.CTk):
         self.detail.configure(text="Project: %s     Edited: %s\nMeshes: %s   Point clouds: %s   Scans: %s"%(
             name, p.get("date") or "?", p.get("meshes"), p.get("clouds"), p.get("nodes")))
         self.detail.grid(); self.renders_lbl.grid(); self.film.grid()
+        if p.get("meshes"): self.view_btn.place(relx=0.975, y=26, anchor="ne")
+        else: self.view_btn.place_forget()
         for w in self.film.winfo_children(): w.destroy()
         if name in self.gallery_cache: self.render_gallery(name, self.gallery_cache[name])
         else:
@@ -1028,6 +1038,71 @@ class App(ctk.CTk):
             try: self.proc.terminate()
             except Exception: pass
     def open_folder(self): subprocess.Popen(["xdg-open", self.dest.get() or DEFAULT_DEST])
+
+    # ---- 3D view ----
+    def _find_mesh(self, name):
+        """Largest fuse_mesh.ply for a project: prefer the local imported copy, else the device mount."""
+        for base in (os.path.join(self.dest.get() or DEFAULT_DEST, name), os.path.join(PROJECTS, name)):
+            plys=glob.glob(os.path.join(base, "data", "*", "fuse_mesh.ply"))
+            if plys:
+                try: return max(plys, key=os.path.getsize)
+                except Exception: return plys[0]
+        return None
+    def on_view_3d(self):
+        name=self.selected
+        if not name: return
+        src=self._find_mesh(name)
+        if not src:
+            self.set_banner("No mesh found for this project.", WARN); return
+        self._open_loader("Loading 3D view", "Reading the mesh… large scans take a few seconds.")
+        threading.Thread(target=self._view_worker, args=(name, src), daemon=True).start()
+    def _view_worker(self, name, src):
+        # if the mesh is on the (slow) device mount, copy it to a local cache first
+        path=src
+        if src.startswith(PROJECTS):
+            try:
+                cache=os.path.join(THUMBS, "view"); os.makedirs(cache, exist_ok=True)
+                path=os.path.join(cache, name+"_fuse_mesh.ply")
+                if not os.path.exists(path) or os.path.getsize(path)!=os.path.getsize(src):
+                    self.q.put(("loader_msg", "Copying mesh from the scanner…"))
+                    shutil.copyfile(src, path)
+            except Exception as e:
+                log_error("view-copy", e); self.q.put(("view_done", None)); return
+        try:
+            viewer=os.path.join(HERE, "viewer.py")
+            proc=subprocess.Popen([_sys.executable, viewer, path, name],
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            for ln in proc.stdout:
+                if "PYVIEW_READY" in ln: self.q.put(("view_done", None)); break
+                if "PYVIEW_ERROR" in ln: log_line("viewer: "+ln.strip()); self.q.put(("view_done", ln.strip())); break
+        except Exception as e:
+            log_error("view-launch", e); self.q.put(("view_done", str(e)))
+
+    def _open_loader(self, title, msg):
+        if getattr(self,"_loader",None):
+            try: self._loader.destroy()
+            except Exception: pass
+        t=ctk.CTkToplevel(self); t.title(title); t.configure(fg_color=BG); t.resizable(False,False)
+        try: t.transient(self); t.attributes("-topmost",True)
+        except Exception: pass
+        w,h=380,150
+        try:
+            self.update_idletasks()
+            x=self.winfo_rootx()+(self.winfo_width()-w)//2; y=self.winfo_rooty()+(self.winfo_height()-h)//3
+            t.geometry("%dx%d+%d+%d"%(w,h,x,y))
+        except Exception: pass
+        card=ctk.CTkFrame(t, fg_color=CARD, corner_radius=14); card.pack(fill="both", expand=True, padx=10, pady=10)
+        ctk.CTkLabel(card, text=title, font=ctk.CTkFont(family=WORDMARK, size=15,weight="bold"), text_color=TX).pack(anchor="w", padx=18, pady=(16,2))
+        self._loader_msg=ctk.CTkLabel(card, text=msg, text_color=MUT, font=ctk.CTkFont(size=12), wraplength=320, justify="left")
+        self._loader_msg.pack(anchor="w", padx=18)
+        pb=ctk.CTkProgressBar(card, mode="indeterminate", height=6, corner_radius=3, progress_color=AC); pb.pack(fill="x", padx=18, pady=(14,16)); pb.start()
+        self._loader=t
+    def _close_loader(self):
+        t=getattr(self,"_loader",None)
+        if t:
+            try: t.destroy()
+            except Exception: pass
+            self._loader=None
 
     # ---- export zip ----
     def on_export_zip(self):
@@ -1147,6 +1222,13 @@ class App(ctk.CTk):
                 elif kind=="zipfail":
                     self.pulling=False; self.zip_btn.configure(state="normal"); self.progress.grid_remove()
                     self.set_banner("ZIP failed: "+rest[0], WARN)
+                elif kind=="loader_msg":
+                    if getattr(self,"_loader_msg",None):
+                        try: self._loader_msg.configure(text=rest[0])
+                        except Exception: pass
+                elif kind=="view_done":
+                    self._close_loader()
+                    if rest[0]: self.set_banner("3D view failed - see Help > Log.", WARN)
         except queue.Empty: pass
         self.after(200, self.drain_loop)
 

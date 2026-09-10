@@ -28,7 +28,7 @@ PointYoink is a small desktop app that does it directly. Put the scanner in File
 
 - Detects the scanner and its File Transfer (MTP) mode, and connects automatically.
 - Lists your projects with thumbnails, dates, scan counts, and sizes.
-- Shows the scanner's own preview render for each scan before you copy anything.
+- Shows the scanner's own preview render for each scan, and opens any mesh in an interactive 3D viewer (rotate/zoom).
 - Copies just the finished models by default, so you move megabytes instead of gigabytes. Or turn that off to pull the full project including raw frames.
 - Optionally exports the meshes to STL, OBJ, or GLB on import.
 - Rename a project to something readable. The original scanner ID stays as the folder name and reference, so nothing is lost.
@@ -60,7 +60,7 @@ These are the standalone MIRACO models that store finished projects on the devic
 
 - Linux with Python 3.10 or newer.
 - System packages: `sudo apt install python3-tk python3-pil.imagetk jmtpfs rsync`
-- Python packages: `pip install customtkinter pillow trimesh`
+- Python packages: `pip install customtkinter pillow trimesh "pyglet<2"`
 - A USB-C **data** cable. Some bundled cables only charge. If nothing shows up, try a different cable.
 
 ## Install
@@ -70,7 +70,7 @@ These are the standalone MIRACO models that store finished projects on the devic
 Download the latest `.deb` from [Releases](https://github.com/datboip/pointyoink/releases), then install it (this pulls in the dependencies automatically):
 
 ```bash
-sudo apt install ./pointyoink_0.4.0_all.deb
+sudo apt install ./pointyoink_0.5.0_all.deb
 ```
 
 PointYoink then shows up in your application menu - launch it from there, or run `pointyoink`. No pip, no virtualenv.
@@ -82,7 +82,7 @@ sudo apt install python3-tk python3-pil.imagetk jmtpfs rsync
 git clone https://github.com/datboip/pointyoink
 cd pointyoink
 python3 -m venv --system-site-packages venv
-./venv/bin/pip install customtkinter pillow trimesh
+./venv/bin/pip install customtkinter pillow trimesh "pyglet<2"
 ./venv/bin/python pointyoink.py
 ```
 

@@ -3,6 +3,11 @@
 All notable changes to PointYoink. Versions before 1.0.0 are pre-release
 builds; 1.0.0 will be the first public GitHub release.
 
+## 0.5.0
+- **View in 3D**: open any scan's mesh in an interactive window - drag to
+  rotate, scroll to zoom, right-drag to pan. A loading indicator stays up until
+  the model is actually on screen, and the mesh is auto-centered.
+
 ## 0.4.0
 - Export ZIP: a button that bundles the selected project(s) into a single .zip
   in your save folder (raw frames skipped), for archiving or moving to another

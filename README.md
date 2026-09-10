@@ -109,9 +109,17 @@ Issues and pull requests are welcome, especially test reports from MIRACO Pro an
 
 MIT. See [LICENSE](LICENSE).
 
-## Acknowledgements
+## Built with
 
-Built on `jmtpfs` and `libmtp`. Thanks to the community reverse-engineering projects that mapped out these scanners, including `HazenBabcock/revopoint-python`, `frostworx/revopoint-pop2-linux-info`, and `ifilipis/metrox`.
+`jmtpfs` and `libmtp` (device access), `rsync` (transfer), CustomTkinter and Pillow (UI), and `trimesh` (STL/OBJ/GLB export). PointYoink contains no code from other Revopoint tools - the MIRACO project layout was worked out directly.
+
+## Related projects
+
+Different scanners or different problems, listed so you can find the right tool if PointYoink isn't the fit:
+
+- [HazenBabcock/revopoint-python](https://github.com/HazenBabcock/revopoint-python) - live control and capture of older **tethered** scanners (POP/MINI) over Wi-Fi.
+- [ifilipis/metrox](https://github.com/ifilipis/metrox) - reverse-engineering and raw-frame processing for the **MetroX**, from PC-cached project files.
+- [frostworx/revopoint-pop2-linux-info](https://github.com/frostworx/revopoint-pop2-linux-info) - notes on running a **POP2** on Linux (Wine/SSH).
 
 ---
 

@@ -33,6 +33,7 @@ PointYoink is a small desktop app that does it directly. Put the scanner in File
 - Optionally exports the meshes to STL, OBJ, or GLB on import.
 - Rename a project to something readable. The original scanner ID stays as the folder name and reference, so nothing is lost.
 - Remembers what you have already imported, across sessions, and asks before importing it again.
+- Export any project as a single .zip for archiving or sharing.
 - Cancel and retry, per-project progress, an import summary, and a dark UI.
 - Built-in error log to make bug reports easy.
 
@@ -69,7 +70,7 @@ These are the standalone MIRACO models that store finished projects on the devic
 Download the latest `.deb` from [Releases](https://github.com/datboip/pointyoink/releases), then install it (this pulls in the dependencies automatically):
 
 ```bash
-sudo apt install ./pointyoink_0.3.2_all.deb
+sudo apt install ./pointyoink_0.4.0_all.deb
 ```
 
 PointYoink then shows up in your application menu - launch it from there, or run `pointyoink`. No pip, no virtualenv.

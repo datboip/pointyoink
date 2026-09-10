@@ -9,7 +9,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image
 
-APP = "PointYoink"; VERSION = "0.3.2"
+APP = "PointYoink"; VERSION = "0.4.0"
 GITHUB = "https://github.com/datboip/pointyoink"
 HOME = os.path.expanduser("~")
 MOUNT = os.path.join(HOME, "revopoint-mtp")
@@ -26,7 +26,11 @@ BG="#0e1117"; CARD="#171b23"; CARD2="#1d222c"; STROKE="#2a3140"; SELB="#22304a"
 AC="#4aa3ff"; AC_H="#3b8fe6"; OK="#3ecf8e"; WARN="#ffb454"; DANGER="#ff6b6b"
 TX="#eef1f5"; MUT="#98a2b3"
 
-CHANGELOG = """0.3.2
+CHANGELOG = """0.4.0
+  - Export ZIP button: bundle the selected project(s) into a .zip in your save
+    folder (raw frames skipped), for archiving or moving to another machine.
+
+0.3.2
   - Fix a crash that stopped the project list from showing whenever the
     scanner had projects on it (an undefined name in the list renderer).
   - HiDPI: read the GNOME desktop scale (and POINTYOINK_SCALE) so the window
@@ -571,12 +575,15 @@ class App(ctk.CTk):
         self.open_btn=ctk.CTkButton(a, text="📂 Open folder", width=130, height=40, corner_radius=20,
                                     fg_color=CARD2, hover_color=STROKE, text_color=TX, command=self.open_folder)
         self.open_btn.grid(row=0,column=1, padx=6)
+        self.zip_btn=ctk.CTkButton(a, text="🗜 Export ZIP", width=130, height=40, corner_radius=20,
+                                   fg_color=CARD2, hover_color=STROKE, text_color=TX, command=self.on_export_zip)
+        self.zip_btn.grid(row=0,column=2, padx=6)
         self.cancel_btn=ctk.CTkButton(a, text="Cancel", width=110, height=40, corner_radius=20,
                                       fg_color="#3a2530", hover_color=DANGER, text_color=TX, command=self.on_cancel)
         self.import_btn=ctk.CTkButton(a, text="⬇  Import selected", width=180, height=40, corner_radius=20,
                                       fg_color=AC, hover_color=AC_H, text_color="#04121f",
                                       font=ctk.CTkFont(size=13,weight="bold"), command=self.on_pull)
-        self.import_btn.grid(row=0,column=2)
+        self.import_btn.grid(row=0,column=3)
 
     # ---- dialogs ----
     def _top(self, title, w=560, h=440, key=None):
@@ -975,7 +982,7 @@ class App(ctk.CTk):
                 if not sel:
                     self.set_banner("Nothing to import (all already imported).", MUT); return
         self.pulling=True; self.cancel=False; self._pull_list=sel
-        self.import_btn.grid_remove(); self.cancel_btn.grid(row=0,column=2)
+        self.import_btn.grid_remove(); self.cancel_btn.grid(row=0,column=3)
         self.progress.grid(row=1,column=0, columnspan=3, sticky="ew", pady=(8,0)); self.progline.grid(row=2,column=0, columnspan=3, sticky="w")
         dest=self.dest.get() or DEFAULT_DEST; mo=self.models_only.get(); self._persist()
         fmts=[]
@@ -1021,8 +1028,58 @@ class App(ctk.CTk):
             try: self.proc.terminate()
             except Exception: pass
     def open_folder(self): subprocess.Popen(["xdg-open", self.dest.get() or DEFAULT_DEST])
+
+    # ---- export zip ----
+    def on_export_zip(self):
+        if self.pulling: return
+        sel=[n for n,v in self.pull_sel.items() if v.get()]
+        if not sel:
+            self.set_banner("Tick the project(s) you want to zip.", WARN); return
+        dest=self.dest.get() or DEFAULT_DEST
+        missing=[n for n in sel if not os.path.isdir(os.path.join(dest,n))]
+        if missing:
+            if self._confirm("Import first?",
+                    "%d selected project(s) haven't been imported yet, so there's nothing local to zip:\n%s\n\nImport them now, then zip everything?"%(len(missing), ", ".join(self.disp(n) for n in missing))):
+                self._zip_after=sel
+                for n,v in self.pull_sel.items(): v.set(n in sel)
+                self.on_pull(); return
+            sel=[n for n in sel if n not in missing]
+            if not sel:
+                self.set_banner("Nothing to zip.", MUT); return
+        self._start_zip(sel, dest)
+    def _start_zip(self, sel, dest):
+        self.pulling=True
+        self.zip_btn.configure(state="disabled")
+        self.progress.grid(row=1,column=0, columnspan=4, sticky="ew", pady=(8,0)); self.progline.grid(row=2,column=0, columnspan=4, sticky="w")
+        threading.Thread(target=self._zip_worker, args=(sel,dest), daemon=True).start()
+    def _zip_worker(self, sel, dest):
+        import zipfile
+        os.makedirs(dest, exist_ok=True)
+        if len(sel)==1:
+            zpath=os.path.join(dest, self.disp(sel[0]).replace("/","_")+".zip")
+        else:
+            zpath=os.path.join(dest, "pointyoink-export-"+time.strftime("%Y%m%d-%H%M%S")+".zip")
+        # collect files (skip raw-frame cache dirs - the models + metadata + previews are what people share)
+        files=[]
+        for name in sel:
+            base=os.path.join(dest, name)
+            for root,dirs,fs in os.walk(base):
+                dirs[:]=[d for d in dirs if d!="cache"]
+                for f in fs:
+                    fp=os.path.join(root,f)
+                    files.append((fp, os.path.join(name, os.path.relpath(fp, base))))
+        total=len(files) or 1
+        try:
+            with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+                for i,(fp,arc) in enumerate(files):
+                    self.q.put(("prog", i/total, "Zipping %d/%d - %s"%(i+1,total,os.path.basename(fp))))
+                    try: z.write(fp, arc)
+                    except Exception as e: log_error("zip "+arc, e)
+            self.q.put(("zipped", zpath, os.path.getsize(zpath)))
+        except Exception as e:
+            log_error("zip", e); self.q.put(("zipfail", str(e)))
     def _finish(self, dest, failed, cancelled=False):
-        self.pulling=False; self.cancel_btn.grid_remove(); self.import_btn.grid(row=0,column=2)
+        self.pulling=False; self.cancel_btn.grid_remove(); self.import_btn.grid(row=0,column=3)
         try:
             if self.progress.cget("mode")=="indeterminate": self.progress.stop(); self.progress.configure(mode="determinate")
         except Exception: pass
@@ -1043,6 +1100,10 @@ class App(ctk.CTk):
             self._persist()
             self.progline.configure(text="Done."); self.set_banner("Import complete.", OK)
             self.projects_sig=None
+            za=getattr(self, "_zip_after", None)
+            if za:
+                self._zip_after=None
+                self._start_zip([n for n in za if os.path.isdir(os.path.join(dest,n))], dest); return
             if self.auto_open.get(): self.open_folder()
 
     # ---- queue ----
@@ -1077,6 +1138,15 @@ class App(ctk.CTk):
                     self.progline.configure(text=line)
                 elif kind=="done": self._finish(rest[0],rest[1])
                 elif kind=="cancelled": self._finish(rest[0],rest[1], cancelled=True)
+                elif kind=="zipped":
+                    zpath,sz=rest; self.pulling=False; self.zip_btn.configure(state="normal")
+                    self.progress.set(0); self.progress.grid_remove()
+                    self.progline.configure(text="Zipped -> %s (%s)"%(os.path.basename(zpath), human(sz)))
+                    self.set_banner("ZIP ready in your save folder.", OK)
+                    if self.auto_open.get(): self.open_folder()
+                elif kind=="zipfail":
+                    self.pulling=False; self.zip_btn.configure(state="normal"); self.progress.grid_remove()
+                    self.set_banner("ZIP failed: "+rest[0], WARN)
         except queue.Empty: pass
         self.after(200, self.drain_loop)
 

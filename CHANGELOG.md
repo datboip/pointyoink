@@ -3,6 +3,11 @@
 All notable changes to PointYoink. Versions before 1.0.0 are pre-release
 builds; 1.0.0 will be the first public GitHub release.
 
+## 0.4.0
+- Export ZIP: a button that bundles the selected project(s) into a single .zip
+  in your save folder (raw frames skipped), for archiving or moving to another
+  machine or slicer.
+
 ## 0.3.2
 - Fix a crash that stopped the project list from rendering whenever the scanner
   had projects on it (an undefined variable in the list renderer). This made the

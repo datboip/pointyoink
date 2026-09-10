@@ -29,8 +29,8 @@ PointYoink is a small desktop app that does it directly. Put the scanner in File
 - Detects the scanner and its File Transfer (MTP) mode, and connects automatically.
 - Lists your projects with thumbnails, dates, scan counts, and sizes.
 - Shows the scanner's own preview render for each scan before you copy anything.
-- Copies just the finished models by default, so you move megabytes instead of gigabytes.
-- Optionally exports the meshes to STL or OBJ on import.
+- Copies just the finished models by default, so you move megabytes instead of gigabytes. Or turn that off to pull the full project including raw frames.
+- Optionally exports the meshes to STL, OBJ, or GLB on import.
 - Rename a project to something readable. The original scanner ID stays as the folder name and reference, so nothing is lost.
 - Remembers what you have already imported, across sessions, and asks before importing it again.
 - Cancel and retry, per-project progress, an import summary, and a dark UI.
@@ -116,9 +116,8 @@ Both are standard binary PLY and open in Blender, MeshLab, or CloudCompare.
 ## Roadmap
 
 - A **Live** tab showing the scanner's real-time orientation and position (the MIRACO streams pose and IMU data over WiFi).
-- Convert `.ply` to `.stl` / `.obj` / `.glb` on import.
-- Optional raw-frame mode for people who want the frames.
-- Confirm MIRACO Pro and Plus, and document any differences.
+- Wireless transfer over WiFi, so you don't need the USB cable.
+- Confirm the base MIRACO and MIRACO Plus, and document any differences from the Pro.
 
 ## Privacy
 

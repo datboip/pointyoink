@@ -10,3 +10,6 @@ dist/
 *.revo
 revopoint-scans*/
 config.json
+
+# deb build output
+packaging/build/

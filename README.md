@@ -58,7 +58,20 @@ These are the standalone MIRACO models that store finished projects on the devic
 
 ## Install
 
+### Debian / Ubuntu (recommended)
+
+Download the latest `.deb` from [Releases](https://github.com/datboip/pointyoink/releases), then install it (this pulls in the dependencies automatically):
+
 ```bash
+sudo apt install ./pointyoink_0.3.0_all.deb
+```
+
+PointYoink then shows up in your application menu - launch it from there, or run `pointyoink`. No pip, no virtualenv.
+
+### From source (any distro)
+
+```bash
+sudo apt install python3-tk python3-pil.imagetk jmtpfs rsync
 git clone https://github.com/datboip/pointyoink
 cd pointyoink
 python3 -m venv --system-site-packages venv

@@ -10,9 +10,13 @@ PointYoink is a small desktop app that does it directly. Put the scanner in File
 
 ## Screenshots
 
-![PointYoink main window](images/app.png)
+<p align="center">
+  <img src="images/splash.png" alt="PointYoink" width="440">
+</p>
 
-![Startup and setup check](images/splash.png)
+<p align="center">
+  <img src="images/app_connected.png" alt="PointYoink main window - connected, with projects and a scan preview" width="920">
+</p>
 
 ## What it does
 

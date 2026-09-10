@@ -9,7 +9,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image
 
-APP = "PointYoink"; VERSION = "0.5.1"
+APP = "PointYoink"; VERSION = "0.5.2"
 GITHUB = "https://github.com/datboip/pointyoink"
 HOME = os.path.expanduser("~")
 MOUNT = os.path.join(HOME, "revopoint-mtp")
@@ -26,7 +26,10 @@ BG="#0e1117"; CARD="#171b23"; CARD2="#1d222c"; STROKE="#2a3140"; SELB="#22304a"
 AC="#4aa3ff"; AC_H="#3b8fe6"; OK="#3ecf8e"; WARN="#ffb454"; DANGER="#ff6b6b"
 TX="#eef1f5"; MUT="#98a2b3"
 
-CHANGELOG = """0.5.1
+CHANGELOG = """0.5.2
+  - Fix the square outline around the "View in 3D" button.
+
+0.5.1
   - 3D viewer opens already-drawn (no black flash while it loads).
   - Preview image scales to fit the window at any size.
   - Project cards on three lines so nothing is cut off.
@@ -515,7 +518,7 @@ class App(ctk.CTk):
                               corner_radius=12, text_color=MUT); self.big.grid(row=0,column=0, sticky="nsew", padx=10, pady=10)
         self.big.bind("<Configure>", self._on_big_resize)
         self.view_btn=ctk.CTkButton(pv, text="⟳  View in 3D", width=130, height=32, corner_radius=16,
-                                    fg_color=AC, hover_color=AC_H, text_color="#04121f",
+                                    fg_color=AC, hover_color=AC_H, text_color="#04121f", bg_color="#0a0c10",
                                     font=ctk.CTkFont(size=12,weight="bold"), command=self.on_view_3d)
         self.view_btn.place(relx=0.975, y=26, anchor="ne"); self.view_btn.place_forget()
         self.detail=ctk.CTkLabel(pv, text="", text_color=TX, anchor="w", justify="left", font=ctk.CTkFont(size=12))

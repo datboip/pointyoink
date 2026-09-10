@@ -8,7 +8,11 @@ PointYoink is a small desktop app that does it directly. Put the scanner in File
 
 > Unofficial. Not affiliated with or endorsed by Revopoint. "Revopoint" and "MIRACO" are trademarks of their respective owners. PointYoink only reads files off your own device and contains none of Revopoint's software.
 
-<!-- Add a screenshot or a short GIF of a real run here. -->
+## Screenshots
+
+![PointYoink main window](images/app.png)
+
+![Startup and setup check](images/splash.png)
 
 ## What it does
 

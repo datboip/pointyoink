@@ -9,7 +9,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image
 
-APP = "PointYoink"; VERSION = "0.3.1"
+APP = "PointYoink"; VERSION = "0.3.2"
 GITHUB = "https://github.com/datboip/pointyoink"
 HOME = os.path.expanduser("~")
 MOUNT = os.path.join(HOME, "revopoint-mtp")
@@ -26,7 +26,13 @@ BG="#0e1117"; CARD="#171b23"; CARD2="#1d222c"; STROKE="#2a3140"; SELB="#22304a"
 AC="#4aa3ff"; AC_H="#3b8fe6"; OK="#3ecf8e"; WARN="#ffb454"; DANGER="#ff6b6b"
 TX="#eef1f5"; MUT="#98a2b3"
 
-CHANGELOG = """0.3.1
+CHANGELOG = """0.3.2
+  - Fix a crash that stopped the project list from showing whenever the
+    scanner had projects on it (an undefined name in the list renderer).
+  - HiDPI: read the GNOME desktop scale (and POINTYOINK_SCALE) so the window
+    is sized correctly on scaled displays.
+
+0.3.1
   - Fix tiny window on HiDPI laptops (auto-detect display scale) and add a
     UI scale setting.
   - Smarter re-import: detects when a project changed on the device.
@@ -233,6 +239,26 @@ def _has_trimesh():
         import trimesh; return True
     except Exception: return False
 
+def _desktop_scale():
+    """Best guess at the desktop UI scale so the app matches other windows.
+    Priority: POINTYOINK_SCALE env > GNOME monitors.xml <scale> > None (caller falls back)."""
+    env=os.environ.get("POINTYOINK_SCALE")
+    if env:
+        try:
+            v=float(env)
+            if 0.5<=v<=4: return v
+        except Exception: pass
+    try:
+        import xml.etree.ElementTree as ET
+        mx=os.path.expanduser("~/.config/monitors.xml")
+        if os.path.exists(mx):
+            scales=[float(s.text) for s in ET.parse(mx).getroot().iter("scale") if s.text]
+            if scales:
+                # the primary/most common scale
+                return max(set(scales), key=scales.count)
+    except Exception: pass
+    return None
+
 # ---------------- app ----------------
 ctk.set_appearance_mode("dark"); ctk.set_default_color_theme("blue")
 
@@ -244,9 +270,12 @@ class App(ctk.CTk):
         self.records = self.cfg.get("records", {})
         # --- UI scaling: honor a saved override, else auto-detect HiDPI so it isn't tiny on laptops ---
         try:
+            # priority: saved override > desktop scale (env / GNOME monitors.xml) > DPI heuristic > 1.0
             scale=self.cfg.get("ui_scale")
             if not scale:
-                ppi=self.winfo_fpixels("1i") or 96.0
+                scale=_desktop_scale()
+            if not scale:
+                ppi=self.winfo_fpixels("1i") or 96.0   # note: XWayland reports a synthetic 96, so this rarely fires
                 scale=max(1.0, min(2.5, round(ppi/96.0*20)/20)) if ppi>110 else 1.0
             scale=float(scale)
             if abs(scale-1.0)>0.02:
@@ -888,7 +917,7 @@ class App(ctk.CTk):
                     ctk.CTkLabel(ml, text="  ✓ imported", text_color=OK, font=ctk.CTkFont(size=10)).pack(side="left")
             ctk.CTkButton(card, text="✎", width=30, height=30, corner_radius=15, fg_color="transparent",
                           hover_color=STROKE, text_color=MUT, command=lambda n=name: self.rename_project(n)).grid(row=0,column=3, padx=(0,8))
-            for w in [card, txt, nl] + txt.winfo_children() + nl.winfo_children():
+            for w in [card, txt, ml] + txt.winfo_children() + ml.winfo_children():
                 w.bind("<Button-1>", lambda e,n=name: self.select_project(n))
         threading.Thread(target=self._compute_sizes, args=([p["name"] for p in projs],), daemon=True).start()
         if projs and not self.selected: self.select_project(projs[0]["name"])

@@ -3,6 +3,13 @@
 All notable changes to PointYoink. Versions before 1.0.0 are pre-release
 builds; 1.0.0 will be the first public GitHub release.
 
+## 0.3.2
+- Fix a crash that stopped the project list from rendering whenever the scanner
+  had projects on it (an undefined variable in the list renderer). This made the
+  app look like it connected but found nothing.
+- HiDPI: read the GNOME desktop scale (and a POINTYOINK_SCALE override) so the
+  window is sized correctly on scaled displays, not just from reported DPI.
+
 ## 0.3.1
 - Fix a tiny window on HiDPI laptops by auto-detecting the display scale, plus a
   manual UI scale setting under Settings.

@@ -70,7 +70,7 @@ These are the standalone MIRACO models that store finished projects on the devic
 Download the latest `.deb` from [Releases](https://github.com/datboip/pointyoink/releases), then install it (this pulls in the dependencies automatically):
 
 ```bash
-sudo apt install ./pointyoink_0.5.2_all.deb
+sudo apt install ./pointyoink_0.6.0_all.deb
 ```
 
 PointYoink then shows up in your application menu - launch it from there, or run `pointyoink`. No pip, no virtualenv.
@@ -100,12 +100,21 @@ python3 -m venv --system-site-packages venv
 
 A MIRACO project holds thousands of raw depth frames plus the finished, fused output. The raw frames are the bulk of the size and are only needed to re-fuse a scan. PointYoink copies just the finished output, so an import moves a few megabytes instead of gigabytes. It still uses `jmtpfs` underneath; the speed comes from not moving the data you do not need.
 
-Output files:
+Imported files land in a clean, flat layout with unique names, so nothing is buried in cryptic folders:
 
-- `fuse_mesh.ply` - the finished mesh, with faces. This is what you print or render.
-- `fuse.ply` - the fused point cloud, points only.
+```
+revopoint-scans-models/
+  Project09102026033917/
+    Project09102026033917_<scan>.ply    # the mesh, one per scan
+    Project09102026033917_<scan>.stl    # if you asked for STL/OBJ/GLB
+    Project09102026033917_<scan>.png    # the scan's preview render
+    Project09102026033917_<scan>_cloud.ply  # the point cloud
+    Project09102026033917.revo          # project metadata
+```
 
-Both are standard binary PLY and open in Blender, MeshLab, or CloudCompare.
+The `.ply` mesh is what you print or render; the `_cloud.ply` is the raw point cloud. Both are standard binary PLY and open in Blender, MeshLab, or CloudCompare. Turn off **Models only** to pull the full project including raw frames instead (kept in the scanner's original nested layout, for re-processing in Revo Scan).
+
+**Export ZIP** bundles the selected projects, and asks what to include - STL only, OBJ only, GLB only, all models, or everything. Files go in flat with clean names, so unzipping gives you a ready-to-use folder (e.g. drop the STLs straight into a slicer).
 
 ## Troubleshooting
 

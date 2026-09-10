@@ -9,7 +9,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image
 
-APP = "PointYoink"; VERSION = "0.5.2"
+APP = "PointYoink"; VERSION = "0.6.0"
 GITHUB = "https://github.com/datboip/pointyoink"
 HOME = os.path.expanduser("~")
 MOUNT = os.path.join(HOME, "revopoint-mtp")
@@ -26,7 +26,14 @@ BG="#0e1117"; CARD="#171b23"; CARD2="#1d222c"; STROKE="#2a3140"; SELB="#22304a"
 AC="#4aa3ff"; AC_H="#3b8fe6"; OK="#3ecf8e"; WARN="#ffb454"; DANGER="#ff6b6b"
 TX="#eef1f5"; MUT="#98a2b3"
 
-CHANGELOG = """0.5.2
+CHANGELOG = """0.6.0
+  - Cleaner file layout: imports land flat with clear unique names
+    (Project_<scan>.ply / .stl / .png), not buried in nested folders.
+  - Export ZIP now asks what to include (STL / OBJ / GLB / all models /
+    everything) and packs files flat, so unzipping is ready to use. It can
+    make STLs on the fly even if you did not export them at import.
+
+0.5.2
   - Fix the square outline around the "View in 3D" button.
 
 0.5.1
@@ -1044,36 +1051,66 @@ class App(ctk.CTk):
         os.makedirs(dest, exist_ok=True); total=len(sel); failed=[]
         for i,name in enumerate(sel):
             if self.cancel: break
-            src=os.path.join(PROJECTS,name)+"/"; dst=os.path.join(dest,name)+"/"; os.makedirs(dst, exist_ok=True)
-            cmd=["rsync","-a","--info=progress2"]+(["--exclude=cache"] if mo else [])+[src,dst]
-            self.q.put(("prog", i/total, "Project %d of %d - %s"%(i+1,total,name)))
             try:
-                self.proc=subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-                for ln in self.proc.stdout:
-                    if self.cancel: self.proc.terminate(); break
-                    m=re.search(r"(\d+)%",ln)
-                    if m:
-                        fp=int(m.group(1)); self.q.put(("prog",(i*100+fp)/(total*100),"Project %d of %d - %s (%d%%)"%(i+1,total,name,fp)))
-                self.proc.wait()
-                if self.proc.returncode not in (0,None) and not self.cancel: failed.append(name)
-                elif fmts and not self.cancel: self._convert_meshes(dst, name, fmts, i, total)
-            except Exception as e: failed.append(name); log_error("import", e)
+                if mo:
+                    self._import_flat(name, dest, fmts, i, total)   # clean flat layout: <name>/<name>_<node>.ply (+.stl)
+                else:
+                    self._import_full(name, dest, i, total)         # full project incl. raw frames (nested mirror)
+            except Exception as e:
+                failed.append(name); log_error("import", e)
         self.proc=None
         self.q.put(("cancelled" if self.cancel else "done", dest, failed))
-    def _convert_meshes(self, dst, name, fmts, i, total):
+
+    def _import_flat(self, name, dest, fmts, i, total):
+        """Copy just the finished models into <dest>/<name>/ with clean unique names."""
+        src=os.path.join(PROJECTS, name); out=os.path.join(dest, name); os.makedirs(out, exist_ok=True)
+        revo=os.path.join(src, name+".revo")
+        if os.path.exists(revo):
+            try: shutil.copyfile(revo, os.path.join(out, name+".revo"))
+            except Exception: pass
+        nodes=sorted(glob.glob(os.path.join(src, "data", "*")))
+        n=max(1,len(nodes))
+        meshes=[]
+        for j,nd in enumerate(nodes):
+            if self.cancel: return
+            if not os.path.isdir(nd): continue
+            node=os.path.basename(nd)
+            self.q.put(("prog", (i*100 + j*90//n)/(total*100), "Importing %s - scan %d/%d"%(name, j+1, n)))
+            m=os.path.join(nd,"fuse_mesh.ply"); c=os.path.join(nd,"fuse.ply"); pv=os.path.join(nd,"preview.png")
+            if os.path.exists(m):
+                d=os.path.join(out, "%s_%s.ply"%(name,node)); shutil.copyfile(m, d); meshes.append(d)
+            if os.path.exists(c):
+                shutil.copyfile(c, os.path.join(out, "%s_%s_cloud.ply"%(name,node)))
+            if os.path.exists(pv):
+                try: shutil.copyfile(pv, os.path.join(out, "%s_%s.png"%(name,node)))
+                except Exception: pass
+        if fmts and not self.cancel:
+            self._convert_files(meshes, name, fmts, i, total)
+
+    def _import_full(self, name, dest, i, total):
+        """Full project including raw frames - kept in the device's nested layout (needed to re-process)."""
+        src=os.path.join(PROJECTS,name)+"/"; dst=os.path.join(dest,name)+"/"; os.makedirs(dst, exist_ok=True)
+        cmd=["rsync","-a","--info=progress2",src,dst]
+        self.q.put(("prog", i/total, "Project %d of %d - %s (full)"%(i+1,total,name)))
+        self.proc=subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        for ln in self.proc.stdout:
+            if self.cancel: self.proc.terminate(); break
+            mm=re.search(r"(\d+)%",ln)
+            if mm:
+                fp=int(mm.group(1)); self.q.put(("prog",(i*100+fp)/(total*100),"Project %d of %d - %s (%d%%)"%(i+1,total,name,fp)))
+        self.proc.wait()
+        if self.proc.returncode not in (0,None) and not self.cancel: raise RuntimeError("rsync rc=%s"%self.proc.returncode)
+
+    def _convert_files(self, plys, name, fmts, i, total):
+        """Convert given mesh .ply files to the requested formats, alongside them."""
         import trimesh
-        plys=sorted(glob.glob(os.path.join(dst,"data","*","fuse_mesh.ply")))  # only meshes (have faces)
-        base=re.sub(r"[^A-Za-z0-9._-]+", "_", self.disp(name)).strip("_") or name
-        multi=len(plys)>1
-        for idx,ply in enumerate(plys,1):
-            node=os.path.basename(os.path.dirname(ply))          # the scan id (numbers)
-            stem="%s_%s"%(base, node)                            # e.g. Project09102026033917_09102026034658
-            if multi: stem+="_m%d"%idx                           # extra guard if two meshes share a node
+        for ply in plys:
+            if self.cancel: return
             self.q.put(("prog", (i+1)/total, "Converting %s to %s"%(name, "/".join(f.upper() for f in fmts))))
             try:
                 mesh=trimesh.load(ply, force="mesh")
                 for ext in fmts:
-                    mesh.export(os.path.join(os.path.dirname(ply), stem+"."+ext))
+                    mesh.export(ply[:-4]+"."+ext)
             except Exception as e:
                 log_error("convert "+os.path.basename(ply), e)
 
@@ -1086,8 +1123,13 @@ class App(ctk.CTk):
 
     # ---- 3D view ----
     def _find_mesh(self, name):
-        """Largest fuse_mesh.ply for a project: prefer the local imported copy, else the device mount."""
-        for base in (os.path.join(self.dest.get() or DEFAULT_DEST, name), os.path.join(PROJECTS, name)):
+        """Largest mesh for a project: prefer the local flat copy, then a full-import mirror, then the device."""
+        local=os.path.join(self.dest.get() or DEFAULT_DEST, name)
+        flat=[p for p in glob.glob(os.path.join(local, name+"_*.ply")) if not p.endswith("_cloud.ply")]
+        if flat:
+            try: return max(flat, key=os.path.getsize)
+            except Exception: return flat[0]
+        for base in (local, os.path.join(PROJECTS, name)):
             plys=glob.glob(os.path.join(base, "data", "*", "fuse_mesh.ply"))
             if plys:
                 try: return max(plys, key=os.path.getsize)
@@ -1155,41 +1197,97 @@ class App(ctk.CTk):
         sel=[n for n,v in self.pull_sel.items() if v.get()]
         if not sel:
             self.set_banner("Tick the project(s) you want to zip.", WARN); return
+        mode=self._ask_zip_format()
+        if not mode: return
         dest=self.dest.get() or DEFAULT_DEST
         missing=[n for n in sel if not os.path.isdir(os.path.join(dest,n))]
         if missing:
             if self._confirm("Import first?",
-                    "%d selected project(s) haven't been imported yet, so there's nothing local to zip:\n%s\n\nImport them now, then zip everything?"%(len(missing), ", ".join(self.disp(n) for n in missing))):
-                self._zip_after=sel
+                    "%d selected project(s) haven't been imported yet, so there's nothing local to zip:\n%s\n\nImport them now, then zip?"%(len(missing), ", ".join(self.disp(n) for n in missing))):
+                self._zip_after=sel; self._zip_mode=mode
                 for n,v in self.pull_sel.items(): v.set(n in sel)
                 self.on_pull(); return
             sel=[n for n in sel if n not in missing]
             if not sel:
                 self.set_banner("Nothing to zip.", MUT); return
-        self._start_zip(sel, dest)
-    def _start_zip(self, sel, dest):
+        self._start_zip(sel, dest, mode)
+    def _ask_zip_format(self):
+        """Choose what goes in the zip. Returns 'stl'/'obj'/'glb'/'models'/'all' or None."""
+        t=ctk.CTkToplevel(self); t.title("Export ZIP"); t.configure(fg_color=BG); t.resizable(False,False)
+        try: t.transient(self); t.attributes("-topmost",True)
+        except Exception: pass
+        w,h=440,360
+        try:
+            self.update_idletasks()
+            x=self.winfo_rootx()+(self.winfo_width()-w)//2; y=self.winfo_rooty()+(self.winfo_height()-h)//3
+            t.geometry("%dx%d+%d+%d"%(w,h,x,y))
+        except Exception: pass
+        res={"v":None}
+        card=ctk.CTkFrame(t, fg_color=CARD, corner_radius=14); card.pack(fill="both", expand=True, padx=10, pady=10)
+        ctk.CTkLabel(card, text="Export ZIP", font=ctk.CTkFont(family=WORDMARK, size=15,weight="bold"), text_color=TX).pack(anchor="w", padx=18, pady=(16,2))
+        ctk.CTkLabel(card, text="What should go in the zip? Files are added flat with clean names.",
+                     text_color=MUT, font=ctk.CTkFont(size=12), wraplength=380, justify="left").pack(anchor="w", padx=18, pady=(0,10))
+        def pick(v): res["v"]=v; t.destroy()
+        opts=[("STL only","stl","for 3D printing"),("OBJ only","obj","for editing"),
+              ("GLB only","glb","for the web / editing"),
+              ("All models","models","every PLY, STL, OBJ, GLB"),
+              ("Everything","all","models, previews, metadata")]
+        for label,val,hint in opts:
+            row=ctk.CTkFrame(card, fg_color="transparent"); row.pack(fill="x", padx=16, pady=3)
+            ctk.CTkButton(row, text=label, width=120, height=32, corner_radius=16, fg_color=CARD2,
+                          hover_color=AC, text_color=TX, anchor="w", command=lambda v=val: pick(v)).pack(side="left")
+            ctk.CTkLabel(row, text=hint, text_color=MUT, font=ctk.CTkFont(size=11)).pack(side="left", padx=10)
+        try:
+            t.grab_set(); t.wait_window()
+        except Exception: pass
+        return res["v"]
+    def _start_zip(self, sel, dest, mode):
         self.pulling=True
         self.zip_btn.configure(state="disabled")
         self.progress.grid(row=1,column=0, columnspan=4, sticky="ew", pady=(8,0)); self.progline.grid(row=2,column=0, columnspan=4, sticky="w")
-        threading.Thread(target=self._zip_worker, args=(sel,dest), daemon=True).start()
-    def _zip_worker(self, sel, dest):
+        threading.Thread(target=self._zip_worker, args=(sel,dest,mode), daemon=True).start()
+    def _project_meshes(self, base, name):
+        """Mesh .ply files for an imported project (flat layout, else nested mirror)."""
+        flat=[p for p in glob.glob(os.path.join(base, name+"_*.ply")) if not p.endswith("_cloud.ply")]
+        if flat: return sorted(flat)
+        return sorted(glob.glob(os.path.join(base, "data", "*", "fuse_mesh.ply")))
+    def _zip_worker(self, sel, dest, mode):
         import zipfile
         os.makedirs(dest, exist_ok=True)
+        tag={"stl":"stl","obj":"obj","glb":"glb","models":"models","all":"full"}.get(mode,mode)
         if len(sel)==1:
-            zpath=os.path.join(dest, self.disp(sel[0]).replace("/","_")+".zip")
+            zpath=os.path.join(dest, "%s_%s.zip"%(sel[0], tag))
         else:
-            zpath=os.path.join(dest, "pointyoink-export-"+time.strftime("%Y%m%d-%H%M%S")+".zip")
-        # collect files (skip raw-frame cache dirs - the models + metadata + previews are what people share)
+            zpath=os.path.join(dest, "pointyoink-%s-%s.zip"%(tag, time.strftime("%Y%m%d-%H%M%S")))
+        # build the file list (src, arcname). flat for models/format modes; nested for 'all'
         files=[]
-        for name in sel:
-            base=os.path.join(dest, name)
-            for root,dirs,fs in os.walk(base):
-                dirs[:]=[d for d in dirs if d!="cache"]
-                for f in fs:
-                    fp=os.path.join(root,f)
-                    files.append((fp, os.path.join(name, os.path.relpath(fp, base))))
-        total=len(files) or 1
         try:
+            for name in sel:
+                base=os.path.join(dest, name)
+                if mode in ("stl","obj","glb"):
+                    for ply in self._project_meshes(base, name):
+                        # name flat & unique: <name>_<node>.<ext>
+                        node=os.path.basename(os.path.dirname(ply)) if os.sep+"data"+os.sep in ply else os.path.basename(ply)[:-4]
+                        stem=node if node.startswith(name) else "%s_%s"%(name,node)
+                        target=os.path.join(os.path.dirname(ply), stem+"."+mode)
+                        if not os.path.exists(target):
+                            self.q.put(("prog", 0.0, "Converting %s to %s…"%(name, mode.upper())))
+                            try:
+                                import trimesh; trimesh.load(ply, force="mesh").export(target)
+                            except Exception as e: log_error("zip-convert "+os.path.basename(ply), e); continue
+                        files.append((target, os.path.basename(target)))
+                elif mode=="models":
+                    for f in glob.glob(os.path.join(base,"*")):
+                        if f.lower().endswith((".ply",".stl",".obj",".glb")): files.append((f, os.path.basename(f)))
+                    for f in glob.glob(os.path.join(base,"data","*","*")):
+                        if f.lower().endswith((".ply",".stl",".obj",".glb")): files.append((f, os.path.basename(f)))
+                else:  # all
+                    for root,dirs,fs in os.walk(base):
+                        dirs[:]=[d for d in dirs if d!="cache"]
+                        for f in fs: fp=os.path.join(root,f); files.append((fp, os.path.join(name, os.path.relpath(fp, base))))
+            if not files:
+                self.q.put(("zipfail", "no matching files (try importing with that format first)")); return
+            total=len(files)
             with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
                 for i,(fp,arc) in enumerate(files):
                     self.q.put(("prog", i/total, "Zipping %d/%d - %s"%(i+1,total,os.path.basename(fp))))
@@ -1223,7 +1321,8 @@ class App(ctk.CTk):
             za=getattr(self, "_zip_after", None)
             if za:
                 self._zip_after=None
-                self._start_zip([n for n in za if os.path.isdir(os.path.join(dest,n))], dest); return
+                mode=getattr(self,"_zip_mode","models"); self._zip_mode=None
+                self._start_zip([n for n in za if os.path.isdir(os.path.join(dest,n))], dest, mode); return
             if self.auto_open.get(): self.open_folder()
 
     # ---- queue ----

@@ -70,7 +70,7 @@ These are the standalone MIRACO models that store finished projects on the devic
 Download the latest `.deb` from [Releases](https://github.com/datboip/pointyoink/releases), then install it (this pulls in the dependencies automatically):
 
 ```bash
-sudo apt install ./pointyoink_0.6.0_all.deb
+sudo apt install ./pointyoink_0.6.1_all.deb
 ```
 
 PointYoink then shows up in your application menu - launch it from there, or run `pointyoink`. No pip, no virtualenv.

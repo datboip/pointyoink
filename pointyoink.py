@@ -9,7 +9,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image
 
-APP = "PointYoink"; VERSION = "0.6.0"
+APP = "PointYoink"; VERSION = "0.6.1"
 GITHUB = "https://github.com/datboip/pointyoink"
 HOME = os.path.expanduser("~")
 MOUNT = os.path.join(HOME, "revopoint-mtp")
@@ -26,7 +26,11 @@ BG="#0e1117"; CARD="#171b23"; CARD2="#1d222c"; STROKE="#2a3140"; SELB="#22304a"
 AC="#4aa3ff"; AC_H="#3b8fe6"; OK="#3ecf8e"; WARN="#ffb454"; DANGER="#ff6b6b"
 TX="#eef1f5"; MUT="#98a2b3"
 
-CHANGELOG = """0.6.0
+CHANGELOG = """0.6.1
+  - Export ZIP now shows an estimated size next to each option, so you can pick
+    one that fits (e.g. under an upload limit) before zipping.
+
+0.6.0
   - Cleaner file layout: imports land flat with clear unique names
     (Project_<scan>.ply / .stl / .png), not buried in nested folders.
   - Export ZIP now asks what to include (STL / OBJ / GLB / all models /
@@ -263,6 +267,21 @@ def _has_trimesh():
     try:
         import trimesh; return True
     except Exception: return False
+
+def _ply_counts(path):
+    """Read vertex/face counts from a PLY header only (fast, no full load)."""
+    v=f=0
+    try:
+        with open(path,"rb") as fh:
+            for _ in range(80):
+                line=fh.readline()
+                if not line: break
+                if line.startswith(b"element vertex"): v=int(line.split()[-1])
+                elif line.startswith(b"element face"): f=int(line.split()[-1])
+                elif line.strip()==b"end_header": break
+    except Exception:
+        pass
+    return v,f
 
 def _desktop_scale():
     """Best guess at the desktop UI scale so the app matches other windows.
@@ -1197,9 +1216,11 @@ class App(ctk.CTk):
         sel=[n for n,v in self.pull_sel.items() if v.get()]
         if not sel:
             self.set_banner("Tick the project(s) you want to zip.", WARN); return
-        mode=self._ask_zip_format()
-        if not mode: return
         dest=self.dest.get() or DEFAULT_DEST
+        try: sizes=self._estimate_sizes(sel, dest)
+        except Exception: sizes=None
+        mode=self._ask_zip_format(sizes)
+        if not mode: return
         missing=[n for n in sel if not os.path.isdir(os.path.join(dest,n))]
         if missing:
             if self._confirm("Import first?",
@@ -1211,12 +1232,12 @@ class App(ctk.CTk):
             if not sel:
                 self.set_banner("Nothing to zip.", MUT); return
         self._start_zip(sel, dest, mode)
-    def _ask_zip_format(self):
+    def _ask_zip_format(self, sizes=None):
         """Choose what goes in the zip. Returns 'stl'/'obj'/'glb'/'models'/'all' or None."""
         t=ctk.CTkToplevel(self); t.title("Export ZIP"); t.configure(fg_color=BG); t.resizable(False,False)
         try: t.transient(self); t.attributes("-topmost",True)
         except Exception: pass
-        w,h=440,360
+        w,h=470,410
         try:
             self.update_idletasks()
             x=self.winfo_rootx()+(self.winfo_width()-w)//2; y=self.winfo_rooty()+(self.winfo_height()-h)//3
@@ -1226,7 +1247,7 @@ class App(ctk.CTk):
         card=ctk.CTkFrame(t, fg_color=CARD, corner_radius=14); card.pack(fill="both", expand=True, padx=10, pady=10)
         ctk.CTkLabel(card, text="Export ZIP", font=ctk.CTkFont(family=WORDMARK, size=15,weight="bold"), text_color=TX).pack(anchor="w", padx=18, pady=(16,2))
         ctk.CTkLabel(card, text="What should go in the zip? Files are added flat with clean names.",
-                     text_color=MUT, font=ctk.CTkFont(size=12), wraplength=380, justify="left").pack(anchor="w", padx=18, pady=(0,10))
+                     text_color=MUT, font=ctk.CTkFont(size=12), wraplength=410, justify="left").pack(anchor="w", padx=18, pady=(0,10))
         def pick(v): res["v"]=v; t.destroy()
         opts=[("STL only","stl","for 3D printing"),("OBJ only","obj","for editing"),
               ("GLB only","glb","for the web / editing"),
@@ -1236,11 +1257,59 @@ class App(ctk.CTk):
             row=ctk.CTkFrame(card, fg_color="transparent"); row.pack(fill="x", padx=16, pady=3)
             ctk.CTkButton(row, text=label, width=120, height=32, corner_radius=16, fg_color=CARD2,
                           hover_color=AC, text_color=TX, anchor="w", command=lambda v=val: pick(v)).pack(side="left")
+            szt=""
+            if sizes and sizes.get(val):
+                szt="≈ "+human(sizes[val])
+            ctk.CTkLabel(row, text=szt, text_color=(AC if sizes and sizes.get(val,0)>0 else MUT),
+                         font=ctk.CTkFont(size=11,weight="bold"), width=78, anchor="e").pack(side="right")
             ctk.CTkLabel(row, text=hint, text_color=MUT, font=ctk.CTkFont(size=11)).pack(side="left", padx=10)
+        ctk.CTkLabel(card, text="Sizes are rough estimates before compression - the real zip is smaller.",
+                     text_color=MUT, font=ctk.CTkFont(size=10), wraplength=410, justify="left").pack(anchor="w", padx=18, pady=(8,0))
         try:
             t.grab_set(); t.wait_window()
         except Exception: pass
         return res["v"]
+    def _mesh_cloud_sources(self, name, dest):
+        """(mesh_plys, cloud_plys) for a project: local flat > local nested > device nested."""
+        local=os.path.join(dest, name)
+        m=[p for p in glob.glob(os.path.join(local, name+"_*.ply")) if not p.endswith("_cloud.ply")]
+        c=glob.glob(os.path.join(local, name+"_*_cloud.ply"))
+        if not m:
+            m=glob.glob(os.path.join(local, "data","*","fuse_mesh.ply")) or glob.glob(os.path.join(PROJECTS, name, "data","*","fuse_mesh.ply"))
+            c=glob.glob(os.path.join(local, "data","*","fuse.ply")) or glob.glob(os.path.join(PROJECTS, name, "data","*","fuse.ply"))
+        return m, c
+    def _estimate_sizes(self, sel, dest):
+        """Rough uncompressed byte estimates per zip mode. The real zip is smaller (compressed)."""
+        est={"stl":0,"obj":0,"glb":0,"models":0,"all":0}
+        for name in sel:
+            meshes,clouds=self._mesh_cloud_sources(name, dest)
+            ply_bytes=0
+            for mp in meshes:
+                try: ply_bytes+=os.path.getsize(mp)
+                except Exception: pass
+                v,f=_ply_counts(mp)
+                # use the real converted file if it already exists, else estimate from the mesh
+                for mode,estfn in (("stl",84+50*f),("obj",v*22+f*24),("glb",v*28+f*12+2048)):
+                    conv=mp[:-4]+"."+mode
+                    est[mode]+= os.path.getsize(conv) if os.path.exists(conv) else estfn
+            for cp in clouds:
+                try: ply_bytes+=os.path.getsize(cp)
+                except Exception: pass
+            est["models"]+=ply_bytes
+            # everything = models + previews + metadata. Walk the folder only when it's LOCAL
+            # (walking the slow device mount here would freeze the dialog); otherwise approximate.
+            localdir=os.path.join(dest,name)
+            if os.path.isdir(localdir):
+                allb=0
+                for root,dirs,fs in os.walk(localdir):
+                    dirs[:]=[d for d in dirs if d!="cache"]
+                    for fn in fs:
+                        try: allb+=os.path.getsize(os.path.join(root,fn))
+                        except Exception: pass
+                est["all"]+=allb
+            else:
+                est["all"]+=int(ply_bytes*1.03)+256*1024   # models + a little for previews/metadata
+        return est
     def _start_zip(self, sel, dest, mode):
         self.pulling=True
         self.zip_btn.configure(state="disabled")

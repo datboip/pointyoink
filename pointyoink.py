@@ -160,7 +160,7 @@ def list_projects():
     for name in names:
         pdir = os.path.join(PROJECTS, name)
         if not os.path.isdir(pdir): continue
-        info = {"name": name, "meshes": None, "clouds": None, "date": None, "nodes": None, "thumb": None}
+        info = {"name": name, "meshes": None, "clouds": None, "date": None, "nodes": None, "thumb": None, "edit_time": None}
         revo = os.path.join(pdir, name + ".revo")
         if os.path.exists(revo):
             try:
@@ -168,7 +168,10 @@ def list_projects():
                 info["meshes"]=d.get("model_mesh_count"); info["clouds"]=d.get("model_pointcloud_count")
                 info["nodes"]=len(d.get("nodes", []))
                 et=d.get("edit_time")
-                if et: info["date"]=time.strftime("%Y-%m-%d %H:%M", time.localtime(int(et)))
+                if et:
+                    info["date"]=time.strftime("%Y-%m-%d %H:%M", time.localtime(int(et)))
+                    try: info["edit_time"]=int(et)
+                    except Exception: info["edit_time"]=None
             except Exception: pass
         tp = os.path.join(THUMBS, name + "__thumb.png")
         if not os.path.exists(tp):
@@ -376,7 +379,7 @@ class App(ctk.CTk):
         if getattr(self,"_missing",None):
             miss=self._missing; self._missing=None
             pkgs=" ".join(c["pkg"] for c in miss)
-            self.after(500, lambda: messagebox.showwarning(APP,
+            self.after(500, lambda: self._alert("Missing tools",
                 "Some required tools aren't installed:\n  "+", ".join(c["pkg"] for c in miss)+
                 "\n\nInstall them with:\n  sudo apt install "+pkgs))
     def _pulse(self):
@@ -505,6 +508,7 @@ class App(ctk.CTk):
     def _actions(self):
         a=ctk.CTkFrame(self, fg_color="transparent"); a.grid(row=4,column=0, sticky="ew", padx=20, pady=(2,14))
         a.grid_columnconfigure(0, weight=1)
+        a.grid_rowconfigure(1, minsize=16); a.grid_rowconfigure(2, minsize=20)   # reserve progress space so it never resizes the window
         self.summary=ctk.CTkLabel(a, text="Nothing selected", text_color=MUT, anchor="w", font=ctk.CTkFont(size=12))
         self.summary.grid(row=0,column=0, sticky="w")
         self.progress=ctk.CTkProgressBar(a, height=8, corner_radius=6, progress_color=AC); self.progress.set(0)
@@ -561,6 +565,39 @@ class App(ctk.CTk):
                 except Exception: pass
                 st["win"]=None
         widget.bind("<Enter>", show); widget.bind("<Leave>", hide)
+
+    def _modal(self, title, message, buttons):
+        """Dark-themed modal. buttons: list of (label, value, accent). Returns chosen value."""
+        dlg=ctk.CTkToplevel(self); dlg.title(title); dlg.configure(fg_color=BG); dlg.resizable(False,False)
+        try: dlg.transient(self)
+        except Exception: pass
+        w,h=440,200
+        try:
+            self.update_idletasks()
+            if self.winfo_width()>100:
+                x=self.winfo_rootx()+(self.winfo_width()-w)//2; y=self.winfo_rooty()+(self.winfo_height()-h)//3
+            else:
+                x=(self.winfo_screenwidth()-w)//2; y=(self.winfo_screenheight()-h)//2
+            dlg.geometry("%dx%d+%d+%d"%(w,h,x,y))
+        except Exception: pass
+        res={"v":None}
+        card=ctk.CTkFrame(dlg, fg_color=CARD, corner_radius=14); card.pack(fill="both", expand=True, padx=10, pady=10)
+        ctk.CTkLabel(card, text=title, font=ctk.CTkFont(family=WORDMARK, size=15, weight="bold"), text_color=TX).pack(anchor="w", padx=18, pady=(16,4))
+        ctk.CTkLabel(card, text=message, font=ctk.CTkFont(size=12), text_color=MUT, justify="left", wraplength=w-64).pack(anchor="w", padx=18, pady=(0,8))
+        row=ctk.CTkFrame(card, fg_color="transparent"); row.pack(side="bottom", fill="x", padx=14, pady=(0,14))
+        def choose(v): res["v"]=v; dlg.destroy()
+        for label,val,accent in buttons:
+            ctk.CTkButton(row, text=label, width=96, height=34, corner_radius=17,
+                          fg_color=(AC if accent else CARD2), hover_color=(AC_H if accent else STROKE),
+                          text_color=("#04121f" if accent else TX), command=lambda v=val: choose(v)).pack(side="right", padx=6)
+        try:
+            dlg.grab_set(); dlg.wait_window()
+        except Exception: pass
+        return res["v"]
+    def _confirm(self, title, message):
+        return self._modal(title, message, [("Yes",True,True),("No",False,False)]) is True
+    def _alert(self, title, message):
+        self._modal(title, message, [("OK",True,True)])
     def dlg_text(self, title, body):
         t=self._top(title)
         if t is None: return
@@ -703,6 +740,17 @@ class App(ctk.CTk):
     def is_imported(self, name):
         if self.records.get(name,{}).get("imported_at"): return True
         return os.path.isdir(os.path.join(self.dest.get() or DEFAULT_DEST, name))
+    def _proj(self, name):
+        return next((x for x in self.projects if x["name"]==name), None)
+    def changed(self, name):
+        """True if the device project has new scans/meshes or a newer edit time since it was imported."""
+        rec=self.records.get(name,{})
+        if not rec.get("imported_at"): return False
+        sig=rec.get("sig"); p=self._proj(name)
+        if not sig or not p: return False
+        return ((p.get("edit_time") or 0) > (sig.get("edit_time") or 0)
+                or (p.get("nodes") or 0) > (sig.get("nodes") or 0)
+                or (p.get("meshes") or 0) > (sig.get("meshes") or 0))
     def rename_project(self, name):
         d=ctk.CTkInputDialog(title="Rename project",
                              text="Friendly name for:\n%s\n\n(the original ID is kept as the folder name /\nreference - clear the box to reset)"%name)
@@ -784,18 +832,22 @@ class App(ctk.CTk):
                 try: self.imgs["row_"+name]=cimg(p["thumb"],54); ctk.CTkLabel(card, image=self.imgs["row_"+name], text="").grid(row=0,column=1, padx=4)
                 except Exception: ctk.CTkLabel(card, text="-", text_color=MUT, width=54).grid(row=0,column=1)
             else: ctk.CTkLabel(card, text="-", text_color=MUT, width=54).grid(row=0,column=1)
-            txt=ctk.CTkFrame(card, fg_color="transparent"); txt.grid(row=0,column=2, sticky="w", padx=6)
-            nl=ctk.CTkFrame(txt, fg_color="transparent"); nl.pack(anchor="w")
-            ctk.CTkLabel(nl, text=self.disp(name), text_color=TX, font=ctk.CTkFont(size=12,weight="bold")).pack(side="left")
-            if self.is_imported(name):
-                ctk.CTkLabel(nl, text="  ✓ imported", text_color=OK, font=ctk.CTkFont(size=10)).pack(side="left")
+            txt=ctk.CTkFrame(card, fg_color="transparent"); txt.grid(row=0,column=2, sticky="ew", padx=6)
+            ctk.CTkLabel(txt, text=self.disp(name), text_color=TX, font=ctk.CTkFont(size=12,weight="bold"),
+                         anchor="w").pack(anchor="w", fill="x")
             if self.records.get(name,{}).get("label"):
-                ctk.CTkLabel(txt, text=name, text_color=MUT, font=ctk.CTkFont(size=9)).pack(anchor="w")
+                ctk.CTkLabel(txt, text=name, text_color=MUT, font=ctk.CTkFont(size=9), anchor="w").pack(anchor="w")
             meta=" · ".join([x for x in [
                 (str(p["meshes"])+"M") if p.get("meshes") else "", (str(p["clouds"])+"C") if p.get("clouds") else "",
                 (str(p["nodes"])+" scans") if p.get("nodes") else "",
                 (human(self.size_cache[name]) if self.size_cache.get(name) else "")] if x])
-            ctk.CTkLabel(txt, text=(p.get("date") or "")+"   "+meta, text_color=MUT, font=ctk.CTkFont(size=10)).pack(anchor="w")
+            ml=ctk.CTkFrame(txt, fg_color="transparent"); ml.pack(anchor="w", fill="x")
+            ctk.CTkLabel(ml, text=(p.get("date") or "")+"   "+meta, text_color=MUT, font=ctk.CTkFont(size=10)).pack(side="left")
+            if self.is_imported(name):
+                if self.changed(name):
+                    ctk.CTkLabel(ml, text="  ↻ updated", text_color=WARN, font=ctk.CTkFont(size=10)).pack(side="left")
+                else:
+                    ctk.CTkLabel(ml, text="  ✓ imported", text_color=OK, font=ctk.CTkFont(size=10)).pack(side="left")
             ctk.CTkButton(card, text="✎", width=30, height=30, corner_radius=15, fg_color="transparent",
                           hover_color=STROKE, text_color=MUT, command=lambda n=name: self.rename_project(n)).grid(row=0,column=3, padx=(0,8))
             for w in [card, txt, nl] + txt.winfo_children() + nl.winfo_children():
@@ -847,10 +899,11 @@ class App(ctk.CTk):
         if self.pulling: return
         sel=[n for n,v in self.pull_sel.items() if v.get()]
         if not sel: self.set_banner("Tick at least one project to import.", WARN); return
-        already=[n for n in sel if self.is_imported(n)]
+        already=[n for n in sel if self.is_imported(n) and not self.changed(n)]
         if already:
             names=", ".join(self.disp(n) for n in already)
-            if not messagebox.askyesno(APP, "%d of these were already imported:\n%s\n\nImport them again anyway?"%(len(already), names)):
+            if not self._confirm("Already imported",
+                    "%d of these were already imported and haven't changed:\n%s\n\nImport them again anyway?"%(len(already), names)):
                 sel=[n for n in sel if n not in already]
                 if not sel:
                     self.set_banner("Nothing to import (all already imported).", MUT); return
@@ -903,18 +956,23 @@ class App(ctk.CTk):
     def open_folder(self): subprocess.Popen(["xdg-open", self.dest.get() or DEFAULT_DEST])
     def _finish(self, dest, failed, cancelled=False):
         self.pulling=False; self.cancel_btn.grid_remove(); self.import_btn.grid(row=0,column=2)
-        self.progress.grid_remove()
+        try:
+            if self.progress.cget("mode")=="indeterminate": self.progress.stop(); self.progress.configure(mode="determinate")
+        except Exception: pass
+        self.progress.set(0); self.progress.grid_remove()
         if cancelled: self.progline.configure(text="Cancelled."); self.set_banner("Import cancelled.", WARN)
         elif failed:
             self.progline.configure(text="Done with errors: "+", ".join(failed))
-            if messagebox.askyesno(APP, "Some projects failed:\n"+"\n".join(failed)+"\n\nRetry those?"):
+            if self._confirm("Some imports failed", "Some projects failed:\n"+"\n".join(failed)+"\n\nRetry those?"):
                 for n,v in self.pull_sel.items(): v.set(n in failed)
                 self.on_pull(); return
         else:
             for n in getattr(self, "_pull_list", []):
                 if n not in failed:
+                    p=self._proj(n) or {}
                     self.records.setdefault(n, {}).update(
-                        imported_to=os.path.join(dest, n), imported_at=int(time.time()))
+                        imported_to=os.path.join(dest, n), imported_at=int(time.time()),
+                        sig={"edit_time":p.get("edit_time"), "nodes":p.get("nodes"), "meshes":p.get("meshes")})
             self._persist()
             self.progline.configure(text="Done."); self.set_banner("Import complete.", OK)
             self.projects_sig=None
@@ -940,7 +998,16 @@ class App(ctk.CTk):
                         for node,fn,sz in sorted(files,key=lambda x:-x[2]):
                             self.files_box.insert("end","  %-5s %9s   %s/%s\n"%("MESH" if "mesh" in fn else "CLOUD", human(sz), node, fn))
                         self.files_box.configure(state="disabled")
-                elif kind=="prog": frac,line=rest; self.progress.set(frac); self.progline.configure(text=line)
+                elif kind=="prog":
+                    frac,line=rest
+                    if "Converting" in line:                       # conversion has no % - animate instead of sitting at 99%
+                        if self.progress.cget("mode")!="indeterminate":
+                            self.progress.configure(mode="indeterminate"); self.progress.start()
+                    else:
+                        if self.progress.cget("mode")=="indeterminate":
+                            self.progress.stop(); self.progress.configure(mode="determinate")
+                        self.progress.set(frac)
+                    self.progline.configure(text=line)
                 elif kind=="done": self._finish(rest[0],rest[1])
                 elif kind=="cancelled": self._finish(rest[0],rest[1], cancelled=True)
         except queue.Empty: pass

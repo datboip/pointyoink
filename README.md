@@ -59,8 +59,8 @@ These are the standalone MIRACO models that store finished projects on the devic
 ## Requirements
 
 - Linux with Python 3.10 or newer.
-- System packages: `sudo apt install python3-tk python3-pil.imagetk jmtpfs rsync`
-- Python packages: `pip install customtkinter pillow trimesh "pyglet<2"`
+- System packages: `sudo apt install python3-tk python3-pil.imagetk python3-matplotlib python3-networkx jmtpfs rsync`
+- Python packages: `pip install customtkinter pillow trimesh "pyglet<2" fast-simplification networkx matplotlib`
 - A USB-C **data** cable. Some bundled cables only charge. If nothing shows up, try a different cable.
 
 ## Install
@@ -70,7 +70,7 @@ These are the standalone MIRACO models that store finished projects on the devic
 Download the latest `.deb` from [Releases](https://github.com/datboip/pointyoink/releases), then install it (this pulls in the dependencies automatically):
 
 ```bash
-sudo apt install ./pointyoink_0.6.2_all.deb
+sudo apt install ./pointyoink_0.7.0_amd64.deb
 ```
 
 PointYoink then shows up in your application menu - launch it from there, or run `pointyoink`. No pip, no virtualenv.
@@ -78,11 +78,11 @@ PointYoink then shows up in your application menu - launch it from there, or run
 ### From source (any distro)
 
 ```bash
-sudo apt install python3-tk python3-pil.imagetk jmtpfs rsync
+sudo apt install python3-tk python3-pil.imagetk python3-matplotlib python3-networkx jmtpfs rsync
 git clone https://github.com/datboip/pointyoink
 cd pointyoink
 python3 -m venv --system-site-packages venv
-./venv/bin/pip install customtkinter pillow trimesh "pyglet<2"
+./venv/bin/pip install customtkinter pillow trimesh "pyglet<2" fast-simplification networkx matplotlib
 ./venv/bin/python pointyoink.py
 ```
 

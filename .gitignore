@@ -5,10 +5,27 @@ __pycache__/
 venv/
 build/
 dist/
-# local runtime / user data - never commit scans or configs
+
+# secrets / env / logs - never commit
+.env
+.env.*
+*.log
+*.pem
+*.key
+id_rsa
+id_ed25519
+*.p12
+
+# local runtime / user data - never commit scans, exports, or configs
 *.ply
+*.stl
+*.obj
+*.glb
+*.zip
 *.revo
 revopoint-scans*/
+scans/
+exports/
 config.json
 
 # deb build output

@@ -9,11 +9,12 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image
 
-APP = "PointYoink"; VERSION = "0.6.2"
+APP = "PointYoink"; VERSION = "0.7.0"
 GITHUB = "https://github.com/datboip/pointyoink"
 HOME = os.path.expanduser("~")
 MOUNT = os.path.join(HOME, "revopoint-mtp")
 PROJECTS = os.path.join(MOUNT, "Internal shared storage", "Projects")
+SCREENSHOTS = os.path.join(MOUNT, "Internal shared storage", "Screenshots")
 THUMBS = "/tmp/pointyoink-thumbs"
 CFG_DIR = os.path.join(HOME, ".config", "pointyoink"); CFG = os.path.join(CFG_DIR, "config.json")
 HERE = os.path.dirname(os.path.abspath(__file__)); ICON = os.path.join(HERE, "icon.png")
@@ -26,7 +27,18 @@ BG="#0e1117"; CARD="#171b23"; CARD2="#1d222c"; STROKE="#2a3140"; SELB="#22304a"
 AC="#4aa3ff"; AC_H="#3b8fe6"; OK="#3ecf8e"; WARN="#ffb454"; DANGER="#ff6b6b"
 TX="#eef1f5"; MUT="#98a2b3"
 
-CHANGELOG = """0.6.2
+CHANGELOG = """0.7.0
+  - Remove base: an interactive cut-plane tool to slice the table/turntable off
+    a scan (keeps a cleaned copy). Plus optional mesh cleanup on import.
+  - Captures tab: browse and pull the scanner's screenshots AND screen
+    recordings, in their own place instead of the project list.
+  - A Tools row groups View in 3D and Remove base.
+  - A bottom status bar shows activity so the app never feels frozen.
+  - Heavy mesh work runs in a memory-capped process so it can't crash your PC.
+  - "Imported" now requires a real model file; partial export/zip failures are
+    reported instead of silently passing; safer device mount cleanup.
+
+0.6.2
   - "Imported" now reflects what is actually on disk - the badge clears if you
     delete the files, and updates live.
   - Project cards rebalanced so the size no longer gets cut off.
@@ -184,10 +196,12 @@ def quick_mounted():
 
 def do_mount():
     if quick_mounted(): return True, "already mounted"
-    subprocess.run(["pkill","-9","-x","jmtpfs"], stderr=subprocess.DEVNULL)
-    subprocess.run(["pkill","-9","-x","gvfsd-mtp"], stderr=subprocess.DEVNULL)
+    # Clear our OWN mountpoint gracefully first (don't blanket-kill MTP for other
+    # devices the user may have connected). Release any gvfs claim on the device,
+    # lazily unmount our path, and only then kill a jmtpfs still holding OUR mount.
     subprocess.run(["bash","-c","gio mount -u 'mtp://*' 2>/dev/null; true"])
     subprocess.run(["fusermount","-uz",MOUNT], stderr=subprocess.DEVNULL)
+    subprocess.run(["pkill","-9","-f","jmtpfs .*%s" % os.path.basename(MOUNT)], stderr=subprocess.DEVNULL)
     if not os.path.isdir(MOUNT):
         try: os.makedirs(MOUNT, exist_ok=True)
         except FileExistsError: pass
@@ -228,6 +242,36 @@ def list_projects():
             except Exception: pass
         if os.path.exists(tp): info["thumb"]=tp
         out.append(info)
+    return out
+
+def list_screenshots():
+    """Device screenshots (Internal shared storage/Screenshots), newest first."""
+    out=[]
+    if not quick_mounted(): return out
+    try:
+        for f in sorted(os.listdir(SCREENSHOTS), reverse=True):
+            if f.lower().endswith((".png", ".jpg", ".jpeg")):
+                out.append((f, os.path.join(SCREENSHOTS, f)))
+    except Exception: pass
+    return out
+
+def list_recordings():
+    """Screen recordings (videos) anywhere on the device except the big Projects tree."""
+    out=[]; exts=(".mp4",".mkv",".webm",".mov",".avi",".m4v")
+    if not quick_mounted(): return out
+    root=os.path.join(MOUNT, "Internal shared storage")
+    try:
+        for entry in os.listdir(root):
+            if entry=="Projects": continue    # skip the huge scan tree
+            sub=os.path.join(root, entry)
+            if os.path.isdir(sub):
+                try:
+                    for f in sorted(os.listdir(sub), reverse=True):
+                        if f.lower().endswith(exts): out.append((f, os.path.join(sub, f)))
+                except Exception: pass
+            elif entry.lower().endswith(exts):
+                out.append((entry, sub))
+    except Exception: pass
     return out
 
 def project_model_size(name):
@@ -363,7 +407,7 @@ class App(ctk.CTk):
         log_line("PointYoink %s started" % VERSION)
 
         self.grid_columnconfigure(0, weight=1); self.grid_rowconfigure(2, weight=1)
-        self._header(); self._statusbar(); self._body(); self._build_options(); self._actions()
+        self._header(); self._statusbar(); self._body(); self._build_options(); self._actions(); self._bottombar()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.refresh_loop(); self.drain_loop(); self._pulse()
         self.after(9000, self._close_splash)   # safety fallback; the setup checks normally close it
@@ -478,23 +522,54 @@ class App(ctk.CTk):
         setbar((i+1)/len(self._checklist))
         self.after(300, lambda: self._run_checks(i+1))
     def _close_splash(self):
-        if self._splash: self._splash_fade(-0.12)
-        else: self.deiconify()
+        if self._splash:
+            self.deiconify()                                  # reveal the app BEHIND the still-topmost splash
+            self.update_idletasks()
+            self.after(140, lambda: self._splash_fade(-0.12)) # let it paint, then dissolve the splash over it
+        else:
+            self.deiconify()
         if getattr(self,"_missing",None):
             miss=self._missing; self._missing=None
             pkgs=" ".join(c["pkg"] for c in miss)
             self.after(500, lambda: self._alert("Missing tools",
                 "Some required tools aren't installed:\n  "+", ".join(c["pkg"] for c in miss)+
                 "\n\nInstall them with:\n  sudo apt install "+pkgs))
+    # ---- bottom status bar ----
+    def _bottombar(self):
+        b=ctk.CTkFrame(self, fg_color=CARD, corner_radius=14, height=30)
+        b.grid(row=5,column=0, sticky="ew", padx=20, pady=(0,10)); b.grid_propagate(False)
+        b.grid_columnconfigure(1, weight=1)
+        self._spin=ctk.CTkLabel(b, text="●", text_color=OK, font=ctk.CTkFont(size=13), width=18)
+        self._spin.grid(row=0,column=0, padx=(14,6))
+        self._status=ctk.CTkLabel(b, text="Ready", text_color=MUT, anchor="w", font=ctk.CTkFont(size=12))
+        self._status.grid(row=0,column=1, sticky="w")
+        ctk.CTkLabel(b, text="%s %s"%(APP,VERSION), text_color="#5a6474",
+                     font=ctk.CTkFont(size=10)).grid(row=0,column=2, padx=(0,14))
+        self._status_msg=""
+
+    def set_status(self, msg=""):
+        """Set a transient bottom-bar message (pass '' to clear back to Ready/busy)."""
+        self._status_msg=msg or ""
+
+    _SPINNER=["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]
     def _pulse(self):
-        # subtle status-dot pulse while busy
-        busy = self._mounting or self.listing or self.pulling
+        busy = (self._mounting or self.listing or self.pulling
+                or getattr(self,"_basing",False) or getattr(self,"_loader",None) is not None)
+        self._pt=getattr(self,"_pt",0)+1
         try:
             if busy:
-                self._pt=getattr(self,"_pt",0)+1
                 self.dot.configure(text_color=(AC if self._pt%2 else "#2b5c8a"))
+                self._spin.configure(text=self._SPINNER[self._pt % len(self._SPINNER)], text_color=AC)
+                msg = self._status_msg or ("Connecting to the scanner…" if self._mounting else
+                      "Reading projects off the scanner…" if self.listing else
+                      "Importing…" if self.pulling else "Working…")
+                self._status.configure(text=msg, text_color=TX)
+            else:
+                self._spin.configure(text="●", text_color=OK)
+                self._status.configure(text=(self._status_msg or "Ready"),
+                                       text_color=(TX if self._status_msg else MUT))
         except Exception: pass
-        self.after(400, self._pulse)
+        self.after(200, self._pulse)
 
     # ---- header ----
     def _header(self):
@@ -548,18 +623,44 @@ class App(ctk.CTk):
         self.big=ctk.CTkLabel(pv, text="Select a project to preview its scans", fg_color="#0a0c10",
                               corner_radius=12, text_color=MUT); self.big.grid(row=0,column=0, sticky="nsew", padx=10, pady=10)
         self.big.bind("<Configure>", self._on_big_resize)
-        self.view_btn=ctk.CTkButton(pv, text="⟳  View in 3D", width=130, height=32, corner_radius=16,
-                                    fg_color=AC, hover_color=AC_H, text_color="#04121f", bg_color="#0a0c10",
-                                    font=ctk.CTkFont(size=12,weight="bold"), command=self.on_view_3d)
-        self.view_btn.place(relx=0.975, y=26, anchor="ne"); self.view_btn.place_forget()
         self.detail=ctk.CTkLabel(pv, text="", text_color=TX, anchor="w", justify="left", font=ctk.CTkFont(size=12))
         self.detail.grid(row=1,column=0, sticky="w", padx=12); self.detail.grid_remove()
         self.renders_lbl=ctk.CTkLabel(pv, text="scan renders (click to enlarge)", text_color=MUT, font=ctk.CTkFont(size=11))
         self.renders_lbl.grid(row=2,column=0, sticky="w", padx=12, pady=(6,0)); self.renders_lbl.grid_remove()
         self.film=ctk.CTkScrollableFrame(pv, orientation="horizontal", fg_color="transparent", height=104)
         self.film.grid(row=3,column=0, sticky="ew", padx=8, pady=(0,10)); self.film.grid_remove()
+        # Tools toolbar: grouped scan actions (no floating buttons -> no square-corner artifacts)
+        self.tools=ctk.CTkFrame(pv, fg_color=CARD2, corner_radius=12)
+        self.tools.grid(row=4,column=0, sticky="ew", padx=10, pady=(0,10)); self.tools.grid_remove()
+        ctk.CTkLabel(self.tools, text="TOOLS", text_color=MUT,
+                     font=ctk.CTkFont(size=10,weight="bold")).pack(side="left", padx=(14,10), pady=8)
+        self.view_btn=ctk.CTkButton(self.tools, text="⟳  View in 3D", width=124, height=32, corner_radius=16,
+                                    fg_color=AC, hover_color=AC_H, text_color="#04121f",
+                                    font=ctk.CTkFont(size=12,weight="bold"), command=self.on_view_3d)
+        self.view_btn.pack(side="left", padx=5, pady=8)
+        self.base_btn=ctk.CTkButton(self.tools, text="✂  Remove base", width=136, height=32, corner_radius=16,
+                                    fg_color=CARD, hover_color=STROKE, text_color=TX,
+                                    font=ctk.CTkFont(size=12,weight="bold"), command=self.on_remove_base)
+        self.base_btn.pack(side="left", padx=5, pady=8)
+        self._tip(self.base_btn, "Interactively slice the table/turntable off the scan. Opens a cut-plane "
+                                 "tool; saves a cleaned copy as <name>_clean.ply. Original is kept.")
         self.files_box=ctk.CTkTextbox(fl, fg_color="#0a0c10", text_color=TX, corner_radius=10, font=ctk.CTkFont(family="monospace", size=12))
         self.files_box.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Captures tab: device screenshots AND screen recordings, out of the project list
+        sc=self.tabs.add("Captures")
+        sc.grid_columnconfigure(0, weight=1); sc.grid_rowconfigure(1, weight=1)
+        sctop=ctk.CTkFrame(sc, fg_color="transparent"); sctop.grid(row=0,column=0, sticky="ew", padx=10, pady=(10,4))
+        self.shots_lbl=ctk.CTkLabel(sctop, text="Screenshots & recordings on the device", text_color=MUT,
+                                    font=ctk.CTkFont(size=12)); self.shots_lbl.pack(side="left")
+        ctk.CTkButton(sctop, text="⤓ Pull all", width=96, height=30, corner_radius=15, fg_color=AC,
+                      hover_color=AC_H, text_color="#04121f", command=self.pull_screenshots).pack(side="right", padx=4)
+        ctk.CTkButton(sctop, text="↻ Refresh", width=96, height=30, corner_radius=15, fg_color=CARD2,
+                      hover_color=STROKE, text_color=TX, command=self.refresh_screenshots).pack(side="right", padx=4)
+        self.shots=ctk.CTkScrollableFrame(sc, fg_color="#0a0c10", corner_radius=10)
+        self.shots.grid(row=1,column=0, sticky="nsew", padx=10, pady=(0,10))
+        for c in range(4): self.shots.grid_columnconfigure(c, weight=1)
+        self._shots_items=[]
 
     # ---- import options ----
     def _build_options(self):
@@ -577,6 +678,11 @@ class App(ctk.CTk):
         ao=ctk.CTkCheckBox(r1, text="Open folder when done", variable=self.auto_open,
                         fg_color=AC, hover_color=AC_H, text_color=TX); ao.pack(side="left", padx=(18,0))
         self._tip(ao, "Open the destination folder automatically when the import finishes.")
+        self.cleanup=ctk.BooleanVar(value=self.cfg.get("cleanup",False))
+        cu=ctk.CTkCheckBox(r1, text="Clean up mesh", variable=self.cleanup,
+                        fg_color=AC, hover_color=AC_H, text_color=TX); cu.pack(side="left", padx=(18,0))
+        self._tip(cu, "Tidy the mesh on your PC during import: keep the main object (remove floating bits), "
+                      "fill small holes, and lightly smooth. Skips the slow on-device edit. Off = raw mesh, untouched.")
         ctk.CTkButton(r1, text="Select all", width=84, height=28, corner_radius=14, fg_color=CARD2,
                       hover_color=STROKE, text_color=TX, command=self.select_all).pack(side="right", padx=4)
         ctk.CTkButton(r1, text="None", width=64, height=28, corner_radius=14, fg_color=CARD2,
@@ -856,17 +962,22 @@ class App(ctk.CTk):
         self.cfg.update(dest=self.dest.get(), models_only=self.models_only.get(),
                         auto_open=self.auto_open.get(), geometry=self.geometry(),
                         exp_stl=self.exp_stl.get(), exp_obj=self.exp_obj.get(), exp_glb=self.exp_glb.get(),
+                        cleanup=self.cleanup.get(),
                         records=self.records); save_cfg(self.cfg)
 
     # per-project records (rename + imported memory), keyed by ORIGINAL id
     def disp(self, name):
         return (self.records.get(name,{}).get("label") or name)
     def is_imported(self, name):
-        # reflect reality: the files must still exist on disk (a saved record isn't enough,
-        # since the user may have deleted the folder)
+        # "imported" must mean a real model actually landed - not just a non-empty folder
+        # left behind by a failed/partial transfer. Require at least one mesh/point-cloud .ply.
         d=os.path.join(self.dest.get() or DEFAULT_DEST, name)
-        try: return os.path.isdir(d) and any(True for _ in os.scandir(d))
-        except Exception: return False
+        if not os.path.isdir(d): return False
+        try:
+            if glob.glob(os.path.join(d, "*.ply")): return True          # flat layout
+            if glob.glob(os.path.join(d, "data", "*", "*.ply")): return True  # full/nested layout
+        except Exception: pass
+        return False
     def _proj(self, name):
         return next((x for x in self.projects if x["name"]==name), None)
     def changed(self, name):
@@ -939,7 +1050,7 @@ class App(ctk.CTk):
         if self._mounting: return
         st,_=usb_state()
         if st!="mtp": self.set_banner("Tap “File Transfer” on the MIRACO first.", WARN); return
-        self._mounting=True; self.set_banner("Connecting…", AC)
+        self._mounting=True; self._shots_loaded=False; self.set_banner("Connecting…", AC)
         threading.Thread(target=lambda: self.q.put(("mounted", *do_mount())), daemon=True).start()
 
     # ---- list ----
@@ -1005,8 +1116,8 @@ class App(ctk.CTk):
         self.detail.configure(text="Project: %s     Edited: %s\nMeshes: %s   Point clouds: %s   Scans: %s"%(
             name, p.get("date") or "?", p.get("meshes"), p.get("clouds"), p.get("nodes")))
         self.detail.grid(); self.renders_lbl.grid(); self.film.grid()
-        if p.get("meshes"): self.view_btn.place(relx=0.975, y=26, anchor="ne")
-        else: self.view_btn.place_forget()
+        if p.get("meshes"): self.tools.grid()
+        else: self.tools.grid_remove()
         for w in self.film.winfo_children(): w.destroy()
         if name in self.gallery_cache: self.render_gallery(name, self.gallery_cache[name])
         else:
@@ -1068,22 +1179,22 @@ class App(ctk.CTk):
                 sel=[n for n in sel if n not in already]
                 if not sel:
                     self.set_banner("Nothing to import (all already imported).", MUT); return
-        self.pulling=True; self.cancel=False; self._pull_list=sel
+        self.pulling=True; self.cancel=False; self._pull_list=sel; self._export_fails=[]
         self.import_btn.grid_remove(); self.cancel_btn.grid(row=0,column=3)
         self.progress.grid(row=1,column=0, columnspan=3, sticky="ew", pady=(8,0)); self.progline.grid(row=2,column=0, columnspan=3, sticky="w")
-        dest=self.dest.get() or DEFAULT_DEST; mo=self.models_only.get(); self._persist()
+        dest=self.dest.get() or DEFAULT_DEST; mo=self.models_only.get(); cleanup=self.cleanup.get(); self._persist()
         fmts=[]
         if self.exp_stl.get(): fmts.append("stl")
         if self.exp_obj.get(): fmts.append("obj")
         if self.exp_glb.get(): fmts.append("glb")
-        threading.Thread(target=self._pull_worker, args=(sel,dest,mo,fmts), daemon=True).start()
-    def _pull_worker(self, sel, dest, mo, fmts):
+        threading.Thread(target=self._pull_worker, args=(sel,dest,mo,fmts,cleanup), daemon=True).start()
+    def _pull_worker(self, sel, dest, mo, fmts, cleanup):
         os.makedirs(dest, exist_ok=True); total=len(sel); failed=[]
         for i,name in enumerate(sel):
             if self.cancel: break
             try:
                 if mo:
-                    self._import_flat(name, dest, fmts, i, total)   # clean flat layout: <name>/<name>_<node>.ply (+.stl)
+                    self._import_flat(name, dest, fmts, cleanup, i, total)   # clean flat layout: <name>/<name>_<node>.ply (+.stl)
                 else:
                     self._import_full(name, dest, i, total)         # full project incl. raw frames (nested mirror)
             except Exception as e:
@@ -1091,7 +1202,7 @@ class App(ctk.CTk):
         self.proc=None
         self.q.put(("cancelled" if self.cancel else "done", dest, failed))
 
-    def _import_flat(self, name, dest, fmts, i, total):
+    def _import_flat(self, name, dest, fmts, cleanup, i, total):
         """Copy just the finished models into <dest>/<name>/ with clean unique names."""
         src=os.path.join(PROJECTS, name); out=os.path.join(dest, name); os.makedirs(out, exist_ok=True)
         revo=os.path.join(src, name+".revo")
@@ -1114,8 +1225,49 @@ class App(ctk.CTk):
             if os.path.exists(pv):
                 try: shutil.copyfile(pv, os.path.join(out, "%s_%s.png"%(name,node)))
                 except Exception: pass
-        if fmts and not self.cancel:
-            self._convert_files(meshes, name, fmts, i, total)
+        if (fmts or cleanup) and not self.cancel:
+            self._process_meshes(meshes, name, fmts, cleanup, i, total)
+
+    def _clean_mesh(self, m):
+        """Tidy a mesh: dedupe, keep the largest connected piece, fill small holes, light smooth."""
+        import trimesh
+        try: m.merge_vertices()
+        except Exception: pass
+        try:
+            m.update_faces(m.nondegenerate_faces()); m.update_faces(m.unique_faces()); m.remove_unreferenced_vertices()
+        except Exception: pass
+        try:
+            comps=m.split(only_watertight=False)
+            if len(comps)>1: m=max(comps, key=lambda c: len(c.faces))
+        except Exception: pass
+        try: m.fill_holes()
+        except Exception: pass
+        try: trimesh.smoothing.filter_humphrey(m, iterations=5)
+        except Exception: pass
+        return m
+
+    def _process_meshes(self, plys, name, fmts, cleanup, i, total):
+        """Optionally clean each mesh (overwrite its .ply), then export the requested formats.
+        Records any failures in self._export_fails so _finish can surface them to the user."""
+        import trimesh
+        for ply in plys:
+            if self.cancel: return
+            try:
+                m=trimesh.load(ply, force="mesh")
+                if cleanup:
+                    self.q.put(("prog", (i+1)/total, "Cleaning up %s…"%name))
+                    m=self._clean_mesh(m)
+                    m.export(ply)   # replace the imported .ply with the cleaned mesh
+            except Exception as e:
+                log_error("process "+os.path.basename(ply), e)
+                self._export_fails.append(os.path.basename(ply)); continue
+            for ext in (fmts or []):
+                if self.cancel: return
+                self.q.put(("prog", (i+1)/total, "Converting %s to %s"%(name, ext.upper())))
+                try: m.export(ply[:-4]+"."+ext)
+                except Exception as e:
+                    log_error("convert %s -> %s"%(os.path.basename(ply), ext), e)
+                    self._export_fails.append(os.path.basename(ply)[:-4]+"."+ext)
 
     def _import_full(self, name, dest, i, total):
         """Full project including raw frames - kept in the device's nested layout (needed to re-process)."""
@@ -1131,18 +1283,6 @@ class App(ctk.CTk):
         self.proc.wait()
         if self.proc.returncode not in (0,None) and not self.cancel: raise RuntimeError("rsync rc=%s"%self.proc.returncode)
 
-    def _convert_files(self, plys, name, fmts, i, total):
-        """Convert given mesh .ply files to the requested formats, alongside them."""
-        import trimesh
-        for ply in plys:
-            if self.cancel: return
-            self.q.put(("prog", (i+1)/total, "Converting %s to %s"%(name, "/".join(f.upper() for f in fmts))))
-            try:
-                mesh=trimesh.load(ply, force="mesh")
-                for ext in fmts:
-                    mesh.export(ply[:-4]+"."+ext)
-            except Exception as e:
-                log_error("convert "+os.path.basename(ply), e)
 
     def on_cancel(self):
         self.cancel=True
@@ -1171,6 +1311,7 @@ class App(ctk.CTk):
         src=self._find_mesh(name)
         if not src:
             self.set_banner("No mesh found for this project.", WARN); return
+        self.set_status("Loading 3D view — reading the mesh…")
         self._open_loader("Loading 3D view", "Reading the mesh… large scans take a few seconds.")
         threading.Thread(target=self._view_worker, args=(name, src), daemon=True).start()
     def _view_worker(self, name, src):
@@ -1194,6 +1335,113 @@ class App(ctk.CTk):
                 if "PYVIEW_ERROR" in ln: log_line("viewer: "+ln.strip()); self.q.put(("view_done", ln.strip())); break
         except Exception as e:
             log_error("view-launch", e); self.q.put(("view_done", str(e)))
+
+    # ---- base removal (interactive cut-plane) ----
+    def on_remove_base(self):
+        if getattr(self, "_basing", False): return
+        name=self.selected
+        if not name: return
+        src=self._find_mesh(name)
+        if not src:
+            self.set_banner("No mesh found for this project.", WARN); return
+        self._basing=True; self.base_btn.configure(state="disabled")
+        self.set_status("Base removal — opening the cut-plane tool…")
+        self._open_loader("Base removal", "Opening the cut-plane tool… large scans take a few seconds.")
+        threading.Thread(target=self._base_worker, args=(name, src), daemon=True).start()
+    def _base_worker(self, name, src):
+        path=src; dest=self.dest.get() or DEFAULT_DEST; outdir=os.path.join(dest, name)
+        if src.startswith(PROJECTS):   # on the slow device mount - copy locally first
+            try:
+                os.makedirs(outdir, exist_ok=True)
+                path=os.path.join(outdir, name+"_fuse_mesh.ply")
+                if not os.path.exists(path) or os.path.getsize(path)!=os.path.getsize(src):
+                    self.q.put(("loader_msg", "Copying mesh from the scanner…"))
+                    shutil.copyfile(src, path)
+            except Exception as e:
+                log_error("base-copy", e); self.q.put(("base_done", ("err", "copy failed"))); return
+        out=os.path.splitext(path)[0]+"_clean.ply"
+        try:
+            tool=os.path.join(HERE, "cutplane.py")
+            env=dict(os.environ, OPENBLAS_NUM_THREADS="1",
+                     POINTYOINK_MEM_CAP_GB=os.environ.get("POINTYOINK_MEM_CAP_GB", "10"))
+            proc=subprocess.Popen([_sys.executable, tool, path, out],
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
+            for ln in proc.stdout:
+                ln=ln.strip()
+                if ln.startswith("CUT_READY"): self.q.put(("loader_close", None))
+                elif ln.startswith("CUT_DONE"): self.q.put(("base_done", ("ok", out))); break
+                elif ln.startswith("CUT_CANCELLED"): self.q.put(("base_done", ("cancel", None))); break
+                elif ln.startswith("CUT_ERROR"): log_line("cutplane: "+ln); self.q.put(("base_done", ("err", ln))); break
+        except Exception as e:
+            log_error("base-launch", e); self.q.put(("base_done", ("err", str(e))))
+
+    # ---- screenshots ----
+    def refresh_screenshots(self):
+        if not quick_mounted():
+            self.set_banner("Connect the scanner to see its screenshots.", WARN); return
+        self.set_status("Reading screenshots off the device…")
+        threading.Thread(target=self._shots_worker, daemon=True).start()
+    def _shots_worker(self):
+        items=list_screenshots(); local=[]
+        cache=os.path.join(THUMBS, "shots"); os.makedirs(cache, exist_ok=True)
+        for i,(nm,path) in enumerate(items):
+            dst=os.path.join(cache, nm)
+            try:
+                if not os.path.exists(dst) or os.path.getsize(dst)!=os.path.getsize(path):
+                    self.q.put(("status", "Loading screenshot %d/%d…"%(i+1, len(items))))
+                    shutil.copyfile(path, dst)
+                local.append((nm, dst))
+            except Exception as e: log_error("shot-copy "+nm, e)
+        # recordings: don't copy the (large) video for display - keep the device path + size
+        recs=[]
+        for nm,path in list_recordings():
+            try: recs.append((nm, path, os.path.getsize(path)))
+            except Exception: recs.append((nm, path, 0))
+        self.q.put(("shots", (local, recs)))
+    def render_shots(self, data):
+        images, recs = data
+        self._shots_items=images; self._recs=recs
+        for w in self.shots.winfo_children(): w.destroy()
+        self.shots_lbl.configure(text="%d screenshot%s · %d recording%s on the device"
+                                 % (len(images), "" if len(images)==1 else "s", len(recs), "" if len(recs)==1 else "s"))
+        if not images and not recs:
+            ctk.CTkLabel(self.shots, text="Nothing found on the device.\n(Take a screenshot or recording on the scanner, then Refresh.)",
+                         text_color=MUT, justify="left").grid(row=0,column=0, padx=20, pady=20, sticky="w"); return
+        idx=0
+        for nm,path in images:
+            r,c=divmod(idx, 4); idx+=1
+            cell=ctk.CTkFrame(self.shots, fg_color=CARD2, corner_radius=10); cell.grid(row=r,column=c, padx=6, pady=6, sticky="nsew")
+            try:
+                self.imgs["shot_"+nm]=cimg(path, 150)
+                lbl=ctk.CTkLabel(cell, image=self.imgs["shot_"+nm], text=""); lbl.pack(padx=6, pady=(6,2))
+                lbl.bind("<Button-1>", lambda e,p=path: self._enlarge(p))
+            except Exception:
+                ctk.CTkLabel(cell, text="(image)", text_color=MUT).pack(padx=20, pady=20)
+            ctk.CTkLabel(cell, text=nm[:20], text_color=MUT, font=ctk.CTkFont(size=9)).pack(pady=(0,6))
+        for nm,path,sz in recs:
+            r,c=divmod(idx, 4); idx+=1
+            cell=ctk.CTkFrame(self.shots, fg_color=CARD2, corner_radius=10); cell.grid(row=r,column=c, padx=6, pady=6, sticky="nsew")
+            ctk.CTkLabel(cell, text="▶", text_color=AC, font=ctk.CTkFont(size=40)).pack(padx=6, pady=(14,2))
+            ctk.CTkLabel(cell, text=nm[:20], text_color=MUT, font=ctk.CTkFont(size=9)).pack()
+            ctk.CTkLabel(cell, text=human(sz), text_color="#5a6474", font=ctk.CTkFont(size=9)).pack(pady=(0,8))
+    def pull_screenshots(self):
+        imgs=getattr(self, "_shots_items", []); recs=getattr(self, "_recs", [])
+        if not imgs and not recs:
+            self.set_banner("Nothing to pull - hit Refresh first.", MUT); return
+        dest=os.path.join(self.dest.get() or DEFAULT_DEST, "captures"); os.makedirs(dest, exist_ok=True)
+        self.set_status("Pulling screenshots & recordings…")
+        threading.Thread(target=self._pull_shots_worker, args=(list(imgs), list(recs), dest), daemon=True).start()
+    def _pull_shots_worker(self, imgs, recs, dest):
+        n=0
+        for nm,path in imgs:
+            try: shutil.copyfile(path, os.path.join(dest, nm)); n+=1
+            except Exception as e: log_error("pull-shot "+nm, e)
+        for j,(nm,path,sz) in enumerate(recs):
+            try:
+                self.q.put(("status", "Pulling recording %d/%d (%s)…"%(j+1, len(recs), human(sz))))
+                shutil.copyfile(path, os.path.join(dest, nm)); n+=1
+            except Exception as e: log_error("pull-rec "+nm, e)
+        self.q.put(("shots_pulled", (n, dest)))
 
     def _open_loader(self, title, msg):
         if getattr(self,"_loader",None):
@@ -1367,13 +1615,13 @@ class App(ctk.CTk):
                         for f in fs: fp=os.path.join(root,f); files.append((fp, os.path.join(name, os.path.relpath(fp, base))))
             if not files:
                 self.q.put(("zipfail", "no matching files (try importing with that format first)")); return
-            total=len(files)
+            total=len(files); zfails=0
             with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
                 for i,(fp,arc) in enumerate(files):
                     self.q.put(("prog", i/total, "Zipping %d/%d - %s"%(i+1,total,os.path.basename(fp))))
                     try: z.write(fp, arc)
-                    except Exception as e: log_error("zip "+arc, e)
-            self.q.put(("zipped", zpath, os.path.getsize(zpath)))
+                    except Exception as e: zfails+=1; log_error("zip "+arc, e)
+            self.q.put(("zipped", zpath, os.path.getsize(zpath), zfails))
         except Exception as e:
             log_error("zip", e); self.q.put(("zipfail", str(e)))
     def _finish(self, dest, failed, cancelled=False):
@@ -1396,7 +1644,13 @@ class App(ctk.CTk):
                         imported_to=os.path.join(dest, n), imported_at=int(time.time()),
                         sig={"edit_time":p.get("edit_time"), "nodes":p.get("nodes"), "meshes":p.get("meshes")})
             self._persist()
-            self.progline.configure(text="Done."); self.set_banner("Import complete.", OK)
+            ef=getattr(self, "_export_fails", [])
+            if ef:
+                self.progline.configure(text="Imported, but %d export(s) failed."%len(ef))
+                self.set_banner("Import done, but %d file(s) failed to export - see Help > Log: %s"
+                                % (len(ef), ", ".join(ef[:3]) + ("…" if len(ef)>3 else "")), WARN)
+            else:
+                self.progline.configure(text="Done."); self.set_banner("Import complete.", OK)
             self.projects_sig=None
             za=getattr(self, "_zip_after", None)
             if za:
@@ -1414,7 +1668,10 @@ class App(ctk.CTk):
                     ok,msg=rest; self._mounting=False
                     if ok: self.listed=False
                     else: self.set_banner("Couldn't connect: "+msg, WARN); log_line("mount failed: "+msg)
-                elif kind=="projects": self.listing=False; self.listed=True; self.render_list(rest[0])
+                elif kind=="projects":
+                    self.listing=False; self.listed=True; self.render_list(rest[0])
+                    if not getattr(self, "_shots_loaded", False):   # auto-load device screenshots once
+                        self._shots_loaded=True; self.refresh_screenshots()
                 elif kind=="sizes": self.projects_sig=None; self.update_summary()
                 elif kind=="gallery": n,items=rest; self.gallery_cache[n]=items; self.render_gallery(n,items)
                 elif kind=="files":
@@ -1438,10 +1695,13 @@ class App(ctk.CTk):
                 elif kind=="done": self._finish(rest[0],rest[1])
                 elif kind=="cancelled": self._finish(rest[0],rest[1], cancelled=True)
                 elif kind=="zipped":
-                    zpath,sz=rest; self.pulling=False; self.zip_btn.configure(state="normal")
+                    zpath,sz,zfails=rest; self.pulling=False; self.zip_btn.configure(state="normal")
                     self.progress.set(0); self.progress.grid_remove()
                     self.progline.configure(text="Zipped -> %s (%s)"%(os.path.basename(zpath), human(sz)))
-                    self.set_banner("ZIP ready in your save folder.", OK)
+                    if zfails:
+                        self.set_banner("ZIP ready, but %d file(s) failed - see Help > Log."%zfails, WARN)
+                    else:
+                        self.set_banner("ZIP ready in your save folder.", OK)
                     if self.auto_open.get(): self.open_folder()
                 elif kind=="zipfail":
                     self.pulling=False; self.zip_btn.configure(state="normal"); self.progress.grid_remove()
@@ -1451,8 +1711,32 @@ class App(ctk.CTk):
                         try: self._loader_msg.configure(text=rest[0])
                         except Exception: pass
                 elif kind=="view_done":
-                    self._close_loader()
+                    self._close_loader(); self.set_status("")
                     if rest[0]: self.set_banner("3D view failed - see Help > Log.", WARN)
+                elif kind=="status":
+                    self.set_status(rest[0])
+                elif kind=="shots":
+                    self.render_shots(rest[0]); self.set_status("")
+                elif kind=="shots_pulled":
+                    n, d = rest[0]; self.set_status("")
+                    self.set_banner("Pulled %d screenshot%s -> %s" % (n, "" if n==1 else "s", d), OK)
+                    if self.auto_open.get(): subprocess.Popen(["xdg-open", d])
+                elif kind=="loader_close":
+                    self._close_loader()
+                elif kind=="base_done":
+                    self._close_loader(); self._basing=False
+                    try: self.base_btn.configure(state="normal")
+                    except Exception: pass
+                    status, info = rest[0]
+                    if status=="ok":
+                        self.set_banner("Base removed -> %s" % os.path.basename(info), OK)
+                        self.set_status("Base removed -> %s" % os.path.basename(info))
+                        self.projects_sig=None   # refresh so the _clean file shows
+                        if self.auto_open.get(): self.open_folder()
+                    elif status=="cancel":
+                        self.set_banner("Base removal cancelled.", MUT); self.set_status("")
+                    else:
+                        self.set_banner("Base removal failed - see Help > Log.", WARN); self.set_status("")
         except queue.Empty: pass
         self.after(200, self.drain_loop)
 
